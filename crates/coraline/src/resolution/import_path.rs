@@ -167,9 +167,9 @@ fn rust_module_segments(file: &str) -> Vec<String> {
     segments
 }
 
-/// `"x.h"` is relative to the including file (or an include dir, matched as
-/// suffix when it names a directory too); `<x.h>` is a system/include-dir
-/// header.
+/// `"x.h"` is relative to the including file (or to an include dir: matched
+/// as suffix when it names a directory too, unless it starts with `./` or
+/// `../`); `<x.h>` is a system/include-dir header.
 fn c_targets(module_path: &str, from_dir: &[String]) -> Vec<ImportTarget> {
     if module_path.starts_with('<') {
         let inner = module_path.trim_start_matches('<').trim_end_matches('>');
@@ -178,7 +178,8 @@ fn c_targets(module_path: &str, from_dir: &[String]) -> Vec<ImportTarget> {
     let inner = module_path.trim_matches('"');
     let segments = slash_segments(inner);
     let mut targets = vec![anchored(join(from_dir, &segments))];
-    if segments.len() > 1 {
+    let explicitly_relative = segments.first().is_some_and(|s| s == "." || s == "..");
+    if segments.len() > 1 && !explicitly_relative {
         targets.push(unanchored(segments));
     }
     targets
@@ -356,9 +357,13 @@ mod tests {
         );
         assert_eq!(
             targets("\"../a/report.h\"", Language::Cpp, "b/app.cpp"),
+            vec![("a/report".to_string(), true)]
+        );
+        assert_eq!(
+            targets("lib/util.h", Language::C, "src/main.c"),
             vec![
-                ("a/report".to_string(), true),
-                ("../a/report".to_string(), false)
+                ("src/lib/util".to_string(), true),
+                ("lib/util".to_string(), false)
             ]
         );
         assert_eq!(

@@ -633,3 +633,222 @@ fn typescript_namespace_import_resolves_qualified_calls() {
         &["heartbeat -> load @ agent/lib/util.ts"],
     );
 }
+
+/// Kotlin: same package across source roots, wildcard imports and imported
+/// top-level functions resolve; same-named functions in other packages don't.
+#[test]
+fn kotlin_package_membership_and_wildcard_imports_resolve() {
+    assert_calls(
+        &[
+            (
+                "src/main/kotlin/app/a/Report.kt",
+                "package app.a\n\nfun describe(x: Int): String = \"\"\n",
+            ),
+            (
+                "src/test/kotlin/app/a/ReportTest.kt",
+                "package app.a\n\nfun testDescribe() { describe(1) }\n",
+            ),
+            (
+                "src/main/kotlin/app/b/App.kt",
+                "package app.b\n\nimport app.u.*\n\nfun run() { helper() }\n",
+            ),
+            (
+                "src/main/kotlin/app/u/Util.kt",
+                "package app.u\n\nfun helper() {}\n",
+            ),
+            (
+                "src/main/kotlin/app/c/Other.kt",
+                "package app.c\n\nfun describe(x: Int): String = \"\"\nfun helper() {}\n",
+            ),
+        ],
+        &[
+            "testDescribe -> describe @ src/main/kotlin/app/a/Report.kt",
+            "run -> helper @ src/main/kotlin/app/u/Util.kt",
+        ],
+    );
+}
+
+#[test]
+fn java_package_membership_and_wildcard_imports_resolve() {
+    assert_calls(
+        &[
+            (
+                "src/main/java/app/a/Report.java",
+                "package app.a;\n\
+                 public class Report { public static String describe(int x) { return \"\"; } }\n",
+            ),
+            (
+                "src/test/java/app/a/ReportTest.java",
+                "package app.a;\n\
+                 class ReportTest { void testDescribe() { Report.describe(1); } }\n",
+            ),
+            (
+                "src/main/java/app/b/App.java",
+                "package app.b;\n\
+                 import app.u.*;\n\
+                 import static app.s.Strings.pad;\n\
+                 class App { void run() { Util.helper(); pad(); } }\n",
+            ),
+            (
+                "src/main/java/app/u/Util.java",
+                "package app.u;\n\
+                 public class Util { public static void helper() {} }\n",
+            ),
+            (
+                "src/main/java/app/s/Strings.java",
+                "package app.s;\n\
+                 public class Strings { public static void pad() {} }\n",
+            ),
+            (
+                "src/main/java/app/c/Report.java",
+                "package app.c;\n\
+                 public class Report {\n\
+                 \x20   public static String describe(int x) { return \"\"; }\n\
+                 \x20   public static void helper() {}\n\
+                 \x20   public static void pad() {}\n\
+                 }\n",
+            ),
+        ],
+        &[
+            "testDescribe -> describe @ src/main/java/app/a/Report.java",
+            "run -> helper @ src/main/java/app/u/Util.java",
+            "run -> pad @ src/main/java/app/s/Strings.java",
+        ],
+    );
+}
+
+/// C#: `using App.A;` brings `App.A` types into scope; the same namespace
+/// spans directories (incl. file-scoped `namespace X;`).
+#[test]
+fn csharp_using_and_namespace_membership_resolve() {
+    assert_calls(
+        &[
+            (
+                "A/Report.cs",
+                "namespace App.A\n\
+                 {\n\
+                 \x20   public static class Report { public static string Describe() { return \"\"; } }\n\
+                 }\n",
+            ),
+            (
+                "B/Program.cs",
+                "using System;\n\
+                 using App.A;\n\
+                 \n\
+                 namespace App.B;\n\
+                 \n\
+                 public static class Program { static void Run() { Report.Describe(); Helpers.Help(); } }\n",
+            ),
+            (
+                "Shared/Helpers.cs",
+                "namespace App.B;\n\
+                 \n\
+                 public static class Helpers { public static void Help() {} }\n",
+            ),
+            (
+                "C/Report.cs",
+                "namespace App.C\n\
+                 {\n\
+                 \x20   public static class Report {\n\
+                 \x20       public static string Describe() { return \"\"; }\n\
+                 \x20       public static void Help() {}\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+        ],
+        &[
+            "Run -> Describe @ A/Report.cs",
+            "Run -> Help @ Shared/Helpers.cs",
+        ],
+    );
+}
+
+#[test]
+fn php_function_imports_and_namespace_membership_resolve() {
+    assert_calls(
+        &[
+            (
+                "src/A/Report.php",
+                "<?php\nnamespace App\\A;\n\nfunction describe(): string { return ''; }\n",
+            ),
+            (
+                "src/B/App.php",
+                "<?php\n\
+                 namespace App\\B;\n\
+                 \n\
+                 use function App\\A\\describe;\n\
+                 \n\
+                 function run(): void { describe(); helper(); }\n",
+            ),
+            (
+                "lib/B/Helpers.php",
+                "<?php\nnamespace App\\B;\n\nfunction helper(): void {}\n",
+            ),
+            (
+                "src/C/Other.php",
+                "<?php\n\
+                 namespace App\\C;\n\
+                 \n\
+                 function describe(): string { return ''; }\n\
+                 function helper(): void {}\n",
+            ),
+        ],
+        &[
+            "run -> describe @ src/A/Report.php",
+            "run -> helper @ lib/B/Helpers.php",
+        ],
+    );
+}
+
+#[test]
+fn c_includes_resolve_to_the_matching_source_file() {
+    assert_calls(
+        &[
+            ("a/report.h", "const char *describe(double x);\n"),
+            (
+                "a/report.c",
+                "#include \"report.h\"\nconst char *describe(double x) { return \"\"; }\n",
+            ),
+            (
+                "b/app.c",
+                "#include \"../a/report.h\"\nvoid run(void) { describe(1.0); }\n",
+            ),
+            (
+                "c/report.c",
+                "const char *describe(double x) { return \"\"; }\n",
+            ),
+        ],
+        &["run -> describe @ a/report.c"],
+    );
+}
+
+#[test]
+fn wildcard_imports_resolve_python_rust_go() {
+    assert_calls(
+        &[
+            (
+                "py/app/main.py",
+                "from py.lib.util import *\n\n\ndef run():\n    helper()\n",
+            ),
+            ("py/lib/util.py", "def helper():\n    pass\n"),
+            ("py/other/util.py", "def helper():\n    pass\n"),
+            (
+                "rs/src/b/app.rs",
+                "use crate::a::*;\n\npub fn rrun() {\n    rhelper();\n}\n",
+            ),
+            ("rs/src/a/mod.rs", "pub fn rhelper() {}\n"),
+            ("rs/src/c/mod.rs", "pub fn rhelper() {}\n"),
+            (
+                "go/app/app.go",
+                "package app\n\nimport . \"example.com/m/go/lib\"\n\nfunc GRun() { GHelper() }\n",
+            ),
+            ("go/lib/lib.go", "package lib\n\nfunc GHelper() {}\n"),
+            ("go/other/lib.go", "package other\n\nfunc GHelper() {}\n"),
+        ],
+        &[
+            "run -> helper @ py/lib/util.py",
+            "rrun -> rhelper @ rs/src/a/mod.rs",
+            "GRun -> GHelper @ go/lib/lib.go",
+        ],
+    );
+}

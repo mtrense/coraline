@@ -39,6 +39,7 @@ impl ReferenceResolver {
         let mut resolved_ids = Vec::new();
 
         let mut imports_by_file: HashMap<String, Vec<FileImport>> = HashMap::new();
+        let mut packages = PackageIndex::default();
 
         for row in &unresolved {
             let reference = &row.reference;
@@ -84,6 +85,7 @@ impl ReferenceResolver {
 
             let candidates = rank_candidates(
                 conn,
+                &mut packages,
                 candidates,
                 from_node.as_ref(),
                 &context,
@@ -221,6 +223,7 @@ fn filter_by_call_kind(nodes: Vec<Node>) -> Vec<Node> {
 
 fn rank_candidates(
     conn: &rusqlite::Connection,
+    packages: &mut PackageIndex,
     nodes: Vec<Node>,
     from_node: Option<&Node>,
     context: &ImportContext<'_>,
@@ -241,18 +244,18 @@ fn rank_candidates(
     // `Report.describe()` / `a.Describe()` with `Report` / `a` imported: the
     // callee lives in that import's module, or outside the project.
     if !context.qualifier.is_empty() {
-        let targets: Vec<_> = context
+        let targets: Vec<Target> = context
             .qualifier
             .iter()
-            .flat_map(|import| import.targets(import.item_name()))
+            .flat_map(|import| import.qualifier_targets())
             .collect();
-        return Ok(best_import_matches(nodes, &targets).0);
+        return Ok(best_matches(conn, packages, nodes, &targets)?.0);
     }
 
     let symbol_targets = context.symbol.map_or_else(Vec::new, |import| {
-        import.targets(Some(import.export_name.as_deref().unwrap_or(symbol_name)))
+        import.symbol_targets(import.export_name.as_deref().unwrap_or(symbol_name))
     });
-    let (import_matches, nodes) = best_import_matches(nodes, &symbol_targets);
+    let (import_matches, nodes) = best_matches(conn, packages, nodes, &symbol_targets)?;
     if !import_matches.is_empty() {
         return Ok(import_matches);
     }
@@ -273,12 +276,35 @@ fn rank_candidates(
     }
 
     if !same_file.is_empty() {
-        Ok(same_file)
-    } else if !same_dir.is_empty() {
-        Ok(same_dir)
+        return Ok(same_file);
+    }
+    if !same_dir.is_empty() {
+        return Ok(same_dir);
+    }
+
+    // Names in scope without naming the callee: wildcard imports, C/C++
+    // includes, C# `using` namespaces, and the caller's own package.
+    let mut scope_targets: Vec<Target> = context
+        .scope
+        .iter()
+        .flat_map(|import| import.scope_targets())
+        .collect();
+    scope_targets.extend(
+        packages
+            .packages(conn, &from_node.file_path)?
+            .iter()
+            .map(|package| Target::Package {
+                package: package.clone(),
+                item: None,
+                score: SAME_PACKAGE_SCORE,
+            }),
+    );
+    let (scope_matches, others) = best_matches(conn, packages, others, &scope_targets)?;
+    if !scope_matches.is_empty() {
+        Ok(scope_matches)
     } else if reference_kind == EdgeKind::Calls {
-        // Avoid low-confidence global-name fallback for call edges because
-        // it causes noisy cross-project links in mixed active/legacy workspaces.
+        // Never fall back to global name matches for calls: unrelated
+        // projects in one workspace share names like `post` / `new` (#43).
         Ok(Vec::new())
     } else {
         Ok(others)
@@ -286,15 +312,20 @@ fn rank_candidates(
 }
 
 /// Split `nodes` into the best-scoring matches of `targets` and the rest.
-fn best_import_matches(nodes: Vec<Node>, targets: &[ScoredTarget]) -> (Vec<Node>, Vec<Node>) {
+fn best_matches(
+    conn: &rusqlite::Connection,
+    packages: &mut PackageIndex,
+    nodes: Vec<Node>,
+    targets: &[Target],
+) -> std::io::Result<(Vec<Node>, Vec<Node>)> {
     let mut best_score = 0;
     let mut matches: Vec<Node> = Vec::new();
     let mut rest = Vec::new();
     for node in nodes {
-        let score = targets
-            .iter()
-            .filter_map(|target| target.score(&node.file_path))
-            .max();
+        let mut score = None;
+        for target in targets {
+            score = score.max(target.score(conn, packages, &node)?);
+        }
         match score {
             Some(score) if score > best_score => {
                 best_score = score;
@@ -305,7 +336,7 @@ fn best_import_matches(nodes: Vec<Node>, targets: &[ScoredTarget]) -> (Vec<Node>
             _ => rest.push(node),
         }
     }
-    (matches, rest)
+    Ok((matches, rest))
 }
 
 fn export_candidates(
@@ -331,6 +362,12 @@ fn export_candidates(
         Ok(Some(exact))
     }
 }
+
+/// Score of a match through a package / namespace (`import app.a.f`,
+/// `using App.A;`), between anchored file matches and path-suffix matches.
+const PACKAGE_SCORE: usize = 500;
+/// Score of a match through the caller's own package / namespace.
+const SAME_PACKAGE_SCORE: usize = 400;
 
 /// An import node of the calling file.
 #[derive(Debug, Clone)]
@@ -367,15 +404,110 @@ impl FileImport {
             .then(|| self.export_name.as_deref().unwrap_or(&self.local_name))
     }
 
-    fn targets(&self, item: Option<&str>) -> Vec<ScoredTarget> {
+    /// Imports that bring names into scope without binding the callee:
+    /// wildcards (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++
+    /// includes and C# `using` namespaces (not aliases).
+    fn is_scope_import(&self) -> bool {
+        match self.language {
+            Language::C | Language::Cpp => true,
+            Language::CSharp => self.export_name.as_deref() == Some(self.local_name.as_str()),
+            _ => matches!(self.local_name.as_str(), "*" | "."),
+        }
+    }
+
+    /// Dotted package / namespace path for languages whose imports name
+    /// packages (`app.a.Report` → `app.a.Report`, `App\A` → `App.A`).
+    fn package_path(&self) -> Option<String> {
+        matches!(
+            self.language,
+            Language::Kotlin | Language::Java | Language::CSharp | Language::Php | Language::Scala
+        )
+        .then(|| {
+            let mut package = normalize_package(&self.module_path);
+            if package.ends_with(".*") {
+                package.truncate(package.len() - 2);
+            }
+            package
+        })
+    }
+
+    fn file_targets(&self, item: Option<&str>) -> Vec<Target> {
         let package_dir = self.language == Language::Go;
-        import_path::import_targets(&self.module_path, self.language, &self.file_path, item)
-            .into_iter()
-            .map(|target| ScoredTarget {
+        let mut module_paths = vec![self.module_path.clone()];
+        // `from pkg import module`
+        if self.language == Language::Python
+            && let Some(export) = &self.export_name
+        {
+            let sep = if self.module_path.ends_with('.') {
+                ""
+            } else {
+                "."
+            };
+            module_paths.push(format!("{}{sep}{export}", self.module_path));
+        }
+        module_paths
+            .iter()
+            .flat_map(|module_path| {
+                import_path::import_targets(module_path, self.language, &self.file_path, item)
+            })
+            .map(|target| Target::File {
                 target,
                 package_dir,
             })
             .collect()
+    }
+
+    /// `package.Item` → members of `package` named `Item` or declared in
+    /// `Item`.
+    fn package_item_target(&self, score: usize) -> Option<Target> {
+        let package = self.package_path()?;
+        let (parent, item) = package.rsplit_once('.')?;
+        Some(Target::Package {
+            package: parent.to_string(),
+            item: Some(item.to_string()),
+            score,
+        })
+    }
+
+    /// Where the callee of `name()` lives when this import binds `name`.
+    fn symbol_targets(&self, item: &str) -> Vec<Target> {
+        let mut targets = self.file_targets(Some(item));
+        targets.extend(self.package_item_target(PACKAGE_SCORE));
+        targets
+    }
+
+    /// Where the callee of `q.name()` lives when this import binds `q`.
+    fn qualifier_targets(&self) -> Vec<Target> {
+        let mut targets = self.file_targets(self.item_name());
+        targets.extend(self.package_item_target(PACKAGE_SCORE));
+        // Namespace aliases: `using X = App.A;`, `use App\A;`
+        targets.extend(self.package_path().map(|package| Target::Package {
+            package,
+            item: None,
+            score: PACKAGE_SCORE,
+        }));
+        targets
+    }
+
+    /// Where an unqualified callee lives when this is a scope import.
+    fn scope_targets(&self) -> Vec<Target> {
+        let module_path = self
+            .module_path
+            .trim_end_matches('*')
+            .trim_end_matches(['.', ':', '\\']);
+        let scope = Self {
+            module_path: module_path.to_string(),
+            ..self.clone()
+        };
+        let mut targets = scope.file_targets(None);
+        // `using static App.A.Util;` / `import static app.a.Util.*;`
+        targets.extend(scope.package_item_target(PACKAGE_SCORE));
+        targets.extend(scope.package_path().map(|package| Target::Package {
+            package,
+            item: None,
+            score: PACKAGE_SCORE,
+        }));
+        targets
     }
 
     /// Whether `qualifier` (`Report`, `a.report`, `util::sub`) starts with
@@ -392,21 +524,111 @@ impl FileImport {
     }
 }
 
-/// Import target plus whether it names a package directory (Go) rather than
-/// a file.
-struct ScoredTarget {
-    target: import_path::ImportTarget,
-    package_dir: bool,
+/// Where an imported name may be declared.
+enum Target {
+    /// A file (or, for Go packages, a directory) the import path maps to.
+    File {
+        target: import_path::ImportTarget,
+        package_dir: bool,
+    },
+    /// Declarations in files declaring `package` / namespace; with `item`,
+    /// only those named `item` or declared inside a type named `item`.
+    Package {
+        package: String,
+        item: Option<String>,
+        score: usize,
+    },
 }
 
-impl ScoredTarget {
-    fn score(&self, file_path: &str) -> Option<usize> {
-        if self.package_dir {
-            import_path::dir_match_score(file_path, &self.target)
-        } else {
-            import_path::match_score(file_path, &self.target)
-        }
+impl Target {
+    fn score(
+        &self,
+        conn: &rusqlite::Connection,
+        packages: &mut PackageIndex,
+        node: &Node,
+    ) -> std::io::Result<Option<usize>> {
+        Ok(match self {
+            Self::File {
+                target,
+                package_dir: true,
+            } => import_path::dir_match_score(&node.file_path, target),
+            Self::File { target, .. } => import_path::match_score(&node.file_path, target),
+            Self::Package {
+                package,
+                item,
+                score,
+            } => {
+                let item_matches = item
+                    .as_deref()
+                    .is_none_or(|item| node.name == item || container_name(node) == Some(item));
+                (item_matches
+                    && packages
+                        .packages(conn, &node.file_path)?
+                        .iter()
+                        .any(|p| p == package))
+                .then_some(*score)
+            }
+        })
     }
+}
+
+/// Name of the type / namespace declaring `node` (`Report` for
+/// `a/Report.cs::App.A::Report::Describe`), if any.
+fn container_name(node: &Node) -> Option<&str> {
+    let mut segments = node.qualified_name.rsplit("::");
+    segments.next();
+    let container = segments.next()?;
+    // Top-level declarations: `file::name`.
+    segments.next().map(|_| container)
+}
+
+/// `App\A`, `\App\A`, `App::A` → `App.A`.
+fn normalize_package(path: &str) -> String {
+    path.trim_start_matches('\\')
+        .replace('\\', ".")
+        .replace("::", ".")
+}
+
+/// Packages / namespaces declared per file (Kotlin / Java `package`, C# /
+/// PHP / C++ `namespace`), cached across references.
+#[derive(Default)]
+struct PackageIndex {
+    by_file: HashMap<String, Vec<String>>,
+}
+
+impl PackageIndex {
+    fn packages(
+        &mut self,
+        conn: &rusqlite::Connection,
+        file_path: &str,
+    ) -> std::io::Result<&[String]> {
+        if !self.by_file.contains_key(file_path) {
+            let declared = declared_packages(conn, file_path)?;
+            self.by_file.insert(file_path.to_string(), declared);
+        }
+        Ok(self.by_file.get(file_path).map_or(&[], Vec::as_slice))
+    }
+}
+
+fn declared_packages(conn: &rusqlite::Connection, file_path: &str) -> std::io::Result<Vec<String>> {
+    // Rust `mod` items are Module nodes too, but not packages.
+    let modules = db::get_nodes_by_file(conn, file_path, Some(NodeKind::Module))?
+        .into_iter()
+        .filter(|node| matches!(node.language, Language::Kotlin | Language::Java))
+        .map(|node| normalize_package(&node.name));
+    // Nested namespaces only carry their own name; the full name is the
+    // qualified name without the file prefix.
+    let prefix = format!("{file_path}::");
+    let namespaces = db::get_nodes_by_file(conn, file_path, Some(NodeKind::Namespace))?
+        .into_iter()
+        .map(|node| {
+            normalize_package(
+                node.qualified_name
+                    .strip_prefix(&prefix)
+                    .unwrap_or(&node.name),
+            )
+        });
+    Ok(modules.chain(namespaces).collect())
 }
 
 /// Imports of the calling file relevant to one reference.
@@ -415,6 +637,8 @@ struct ImportContext<'a> {
     symbol: Option<&'a FileImport>,
     /// Imports binding the call's qualifier (`Report` in `Report.describe()`).
     qualifier: Vec<&'a FileImport>,
+    /// Imports bringing names into scope (`import app.a.*`, `#include`).
+    scope: Vec<&'a FileImport>,
 }
 
 impl<'a> ImportContext<'a> {
@@ -427,6 +651,10 @@ impl<'a> ImportContext<'a> {
                     .filter(|import| import.binds_qualifier(qualifier))
                     .collect()
             }),
+            scope: imports
+                .iter()
+                .filter(|import| import.is_scope_import())
+                .collect(),
         }
     }
 }
