@@ -126,8 +126,11 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "type_identifier",
                 "simple_identifier",
                 "navigation_expression",
+                // swift_class_kind
+                "class_declaration",
+                "deinit_declaration",
             ],
-            &["constructed_type", "suffix"],
+            &["constructed_type", "suffix", "declaration_kind"],
         ),
         _ => (&[], &[]),
     }
@@ -163,12 +166,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         ],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         Language::Ruby => &["kind:def", "kind:method_call"],
-        Language::Swift => &[
-            "field:module_name",
-            "kind:enum_declaration",
-            "kind:extension_declaration",
-            "kind:struct_declaration",
-        ],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
         Language::Blazor => &[
             "kind:component_definition",

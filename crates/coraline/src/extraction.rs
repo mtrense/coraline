@@ -988,6 +988,11 @@ fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
         }
     }
 
+    // Swift `deinit` has no name field.
+    if language == Language::Swift && node.kind() == "deinit_declaration" {
+        return Some("deinit".to_string());
+    }
+
     let name_node = node
         .child_by_field_name("name")
         .or_else(|| node.child_by_field_name("identifier"))
@@ -1353,7 +1358,8 @@ fn import_path_field(language: Language) -> Option<&'static str> {
         Language::CSharp => Some("qualified_name"),
         Language::Php => Some("name"),
         Language::Ruby => Some("argument"),
-        Language::Swift => Some("module_name"),
+        // Swift `import_declaration` has no fields; the path is an `identifier` child.
+        Language::Swift => None,
         // Kotlin `import` has no fields; the path is a `qualified_identifier` child.
         Language::Kotlin => None,
         _ => Some("source"),
@@ -2102,13 +2108,11 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("function_declaration", NodeKind::Function, false),
             ("init_declaration", NodeKind::Method, false),
             ("deinit_declaration", NodeKind::Method, false),
+            // class / struct / enum / extension / actor; see `swift_class_kind`
             ("class_declaration", NodeKind::Class, true),
-            ("struct_declaration", NodeKind::Struct, true),
-            ("enum_declaration", NodeKind::Enum, true),
             ("protocol_declaration", NodeKind::Protocol, true),
             ("property_declaration", NodeKind::Property, false),
             ("import_declaration", NodeKind::Import, false),
-            ("extension_declaration", NodeKind::Class, true),
         ],
 
         // === Kotlin ===
@@ -2157,7 +2161,26 @@ fn node_kind(node: &TsNode, source: &str, language: Language) -> (Option<NodeKin
         {
             (Some(kotlin_class_kind(node, source)), container)
         }
+        (Language::Swift, (Some(NodeKind::Class), container))
+            if node.kind() == "class_declaration" =>
+        {
+            (Some(swift_class_kind(node)), container)
+        }
         _ => mapped,
+    }
+}
+
+/// Swift `class_declaration` covers `class`, `struct`, `enum`, `extension`
+/// and `actor`, distinguished by its `declaration_kind` keyword. Extensions
+/// and actors are kept as classes.
+fn swift_class_kind(node: &TsNode) -> NodeKind {
+    match node
+        .child_by_field_name("declaration_kind")
+        .map(|k| k.kind())
+    {
+        Some("struct") => NodeKind::Struct,
+        Some("enum") => NodeKind::Enum,
+        _ => NodeKind::Class,
     }
 }
 
