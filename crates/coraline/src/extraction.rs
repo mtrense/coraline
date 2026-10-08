@@ -36,6 +36,9 @@ use crate::types::{
 use crate::utils::{hash_sha256, node_id_for_symbol};
 use tracing::{debug, info, warn};
 
+/// Page size for reading unresolved refs; the resolver visits all pages.
+const RESOLVE_BATCH_SIZE: usize = 10_000;
+
 #[cfg(test)]
 mod grammar_guard_tests;
 
@@ -298,7 +301,9 @@ pub fn index_all(
         }
     }
 
-    if let Err(err) = ReferenceResolver::resolve_unresolved(&mut conn, project_root, 10_000) {
+    if let Err(err) =
+        ReferenceResolver::resolve_unresolved(&mut conn, project_root, RESOLVE_BATCH_SIZE)
+    {
         warn!(error = %err, "reference resolver failed");
         errors.push(ExtractionError {
             message: format!("Resolver failed: {err}"),
@@ -400,7 +405,7 @@ pub fn sync(
         }
     }
 
-    let _ = ReferenceResolver::resolve_unresolved(&mut conn, project_root, 10_000);
+    let _ = ReferenceResolver::resolve_unresolved(&mut conn, project_root, RESOLVE_BATCH_SIZE);
 
     info!(
         files_added,

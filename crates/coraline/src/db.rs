@@ -795,20 +795,25 @@ pub fn get_edges_by_target_with_confidence(
     Ok(results)
 }
 
+/// One page of unresolved refs with `id > after_id`, ordered by id.
+///
+/// Keyset paging: callers pass the last id of the previous page, so every
+/// ref is visited once per pass even when most of them never resolve.
 pub fn list_unresolved_refs(
     conn: &Connection,
+    after_id: i64,
     limit: usize,
 ) -> std::io::Result<Vec<UnresolvedRefRow>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, from_node_id, reference_name, reference_kind, line, col, candidates,
                     qualifier
-             FROM unresolved_refs LIMIT ?",
+             FROM unresolved_refs WHERE id > ? ORDER BY id LIMIT ?",
         )
         .map_err(io_other)?;
     let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
     let rows = stmt
-        .query_map(params![limit_i64], |row| {
+        .query_map(params![after_id, limit_i64], |row| {
             let id: i64 = row.get(0)?;
             let reference_kind_raw: String = row.get(3)?;
             let candidates_raw: Option<String> = row.get(6)?;

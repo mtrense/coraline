@@ -23,109 +23,133 @@ pub struct ResolveResult {
 }
 
 impl ReferenceResolver {
+    /// Try to resolve every stored unresolved ref.
+    ///
+    /// Refs are read in pages of `batch_size` (keyset paging by id), so refs
+    /// that never resolve (stdlib calls such as `println`) cannot starve
+    /// later ones. Unresolvable refs stay queued: a later index may add
+    /// their target.
     pub fn resolve_unresolved(
         conn: &mut rusqlite::Connection,
         project_root: &Path,
-        limit: usize,
+        batch_size: usize,
     ) -> std::io::Result<ResolveResult> {
-        let unresolved = db::list_unresolved_refs(conn, limit)?;
-        if unresolved.is_empty() {
-            return Ok(ResolveResult {
-                scanned: 0,
-                resolved: 0,
-                remaining: 0,
-            });
-        }
-
-        let mut resolved_edges = Vec::new();
-        let mut resolved_ids = Vec::new();
-
+        let mut total = ResolveResult {
+            scanned: 0,
+            resolved: 0,
+            remaining: 0,
+        };
         let mut imports_by_file: HashMap<String, Vec<FileImport>> = HashMap::new();
         let mut packages = PackageIndex::new(project_root);
-
-        for row in &unresolved {
-            let reference = &row.reference;
-            let from_node = db::get_node_by_id(conn, &reference.from_node_id)?;
-            let imports: &[FileImport] = match &from_node {
-                Some(node) => {
-                    if !imports_by_file.contains_key(&node.file_path) {
-                        let imports = file_imports(conn, &node.file_path)?;
-                        imports_by_file.insert(node.file_path.clone(), imports);
-                    }
-                    imports_by_file
-                        .get(&node.file_path)
-                        .map_or(&[], Vec::as_slice)
-                }
-                None => &[],
+        let mut after_id = 0;
+        loop {
+            let page = db::list_unresolved_refs(conn, after_id, batch_size.max(1))?;
+            let Some(last) = page.last() else {
+                break;
             };
-            let context = ImportContext::new(
-                imports,
-                &reference.reference_name,
-                reference.qualifier.as_deref(),
-            );
-            // `use a::b as c; c()` / `import { b as c }`: look up the
-            // original name.
-            let lookup_name = context
-                .symbol
-                .and_then(|import| import.export_name.as_deref())
-                .unwrap_or(&reference.reference_name);
-            let candidates = match reference.reference_kind {
-                EdgeKind::Calls => {
-                    // Prefer extractor-provided candidate IDs for better locality/precision.
-                    let from_ids = reference
-                        .candidates
-                        .as_ref()
-                        .map_or_else(Vec::new, |ids| nodes_from_ids(conn, ids));
-                    if from_ids.is_empty() {
-                        filter_by_call_kind(db::find_nodes_by_name(conn, lookup_name)?)
-                    } else {
-                        filter_by_call_kind(from_ids)
-                    }
-                }
-                _ => db::find_nodes_by_name(conn, &reference.reference_name)?,
-            };
-
-            let candidates = rank_candidates(
+            after_id = last.id;
+            let resolved = resolve_page(
                 conn,
+                project_root,
+                &page,
+                &mut imports_by_file,
                 &mut packages,
-                candidates,
-                from_node.as_ref(),
-                &context,
-                &reference.reference_name,
-                reference.reference_kind,
             )?;
+            total.scanned += page.len();
+            total.resolved += resolved;
+            total.remaining += page.len().saturating_sub(resolved);
+        }
+        Ok(total)
+    }
+}
 
-            let mut edges = reference_edges(reference, candidates, from_node.as_ref());
-            // If generic resolution found nothing, try framework-specific hints.
-            if edges.is_empty()
-                && let Some(from) = &from_node
-            {
-                let fallback =
-                    framework_fallback(conn, project_root, from, &reference.reference_name);
-                if fallback.len() == 1 {
-                    edges = reference_edges(reference, fallback, None);
+/// Resolve one page of refs; store the edges and drop the resolved refs.
+/// Returns the number of resolved refs.
+fn resolve_page(
+    conn: &mut rusqlite::Connection,
+    project_root: &Path,
+    unresolved: &[db::UnresolvedRefRow],
+    imports_by_file: &mut HashMap<String, Vec<FileImport>>,
+    packages: &mut PackageIndex,
+) -> std::io::Result<usize> {
+    let mut resolved_edges = Vec::new();
+    let mut resolved_ids = Vec::new();
+
+    for row in unresolved {
+        let reference = &row.reference;
+        let from_node = db::get_node_by_id(conn, &reference.from_node_id)?;
+        let imports: &[FileImport] = match &from_node {
+            Some(node) => {
+                if !imports_by_file.contains_key(&node.file_path) {
+                    let imports = file_imports(conn, &node.file_path)?;
+                    imports_by_file.insert(node.file_path.clone(), imports);
+                }
+                imports_by_file
+                    .get(&node.file_path)
+                    .map_or(&[], Vec::as_slice)
+            }
+            None => &[],
+        };
+        let context = ImportContext::new(
+            imports,
+            &reference.reference_name,
+            reference.qualifier.as_deref(),
+        );
+        // `use a::b as c; c()` / `import { b as c }`: look up the
+        // original name.
+        let lookup_name = context
+            .symbol
+            .and_then(|import| import.export_name.as_deref())
+            .unwrap_or(&reference.reference_name);
+        let candidates = match reference.reference_kind {
+            EdgeKind::Calls => {
+                // Prefer extractor-provided candidate IDs for better locality/precision.
+                let from_ids = reference
+                    .candidates
+                    .as_ref()
+                    .map_or_else(Vec::new, |ids| nodes_from_ids(conn, ids));
+                if from_ids.is_empty() {
+                    filter_by_call_kind(db::find_nodes_by_name(conn, lookup_name)?)
+                } else {
+                    filter_by_call_kind(from_ids)
                 }
             }
-            if !edges.is_empty() {
-                resolved_edges.append(&mut edges);
-                resolved_ids.push(row.id);
+            _ => db::find_nodes_by_name(conn, &reference.reference_name)?,
+        };
+
+        let candidates = rank_candidates(
+            conn,
+            packages,
+            candidates,
+            from_node.as_ref(),
+            &context,
+            &reference.reference_name,
+            reference.reference_kind,
+        )?;
+
+        let mut edges = reference_edges(reference, candidates, from_node.as_ref());
+        // If generic resolution found nothing, try framework-specific hints.
+        if edges.is_empty()
+            && let Some(from) = &from_node
+        {
+            let fallback = framework_fallback(conn, project_root, from, &reference.reference_name);
+            if fallback.len() == 1 {
+                edges = reference_edges(reference, fallback, None);
             }
         }
-
-        if !resolved_edges.is_empty() {
-            db::insert_edges(conn, &resolved_edges)?;
+        if !edges.is_empty() {
+            resolved_edges.append(&mut edges);
+            resolved_ids.push(row.id);
         }
-        if !resolved_ids.is_empty() {
-            db::delete_unresolved_refs(conn, &resolved_ids)?;
-        }
-
-        let remaining = unresolved.len().saturating_sub(resolved_ids.len());
-        Ok(ResolveResult {
-            scanned: unresolved.len(),
-            resolved: resolved_ids.len(),
-            remaining,
-        })
     }
+
+    if !resolved_edges.is_empty() {
+        db::insert_edges(conn, &resolved_edges)?;
+    }
+    if !resolved_ids.is_empty() {
+        db::delete_unresolved_refs(conn, &resolved_ids)?;
+    }
+    Ok(resolved_ids.len())
 }
 
 /// Compute the resolution-confidence score for a single resolved reference.
