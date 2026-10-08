@@ -16,6 +16,9 @@ VALUES (2, strftime('%s', 'now') * 1000, 'Add edges.confidence for resolution-st
 INSERT INTO schema_versions (version, applied_at, description)
 VALUES (3, strftime('%s', 'now') * 1000, 'Add nodes.cluster_id + edges.process_id for Louvain clustering and process tracing (Phase 5.1)');
 
+INSERT INTO schema_versions (version, applied_at, description)
+VALUES (5, strftime('%s', 'now') * 1000, 'Add unresolved_refs.qualifier for import-backed call resolution');
+
 CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -73,6 +76,7 @@ CREATE TABLE IF NOT EXISTS unresolved_refs (
     line INTEGER NOT NULL,
     col INTEGER NOT NULL,
     candidates TEXT,
+    qualifier TEXT,
     FOREIGN KEY (from_node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
 

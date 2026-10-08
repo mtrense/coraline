@@ -289,6 +289,12 @@ pub fn match_score(file: &str, target: &ImportTarget) -> Option<usize> {
         .max()
 }
 
+/// [`match_score`] for the directory of `file` (Go packages) instead of the
+/// file itself.
+pub fn dir_match_score(file: &str, target: &ImportTarget) -> Option<usize> {
+    segments_score(&parent_segments(file), target)
+}
+
 fn segments_score(form: &[String], target: &ImportTarget) -> Option<usize> {
     if target.anchored {
         return (form == target.segments.as_slice()).then_some(EXACT_SCORE);
@@ -439,6 +445,9 @@ mod tests {
         assert_eq!(match_score("other/Report.java", &java), None);
         let utils = unanchored(segs("utils"));
         assert_eq!(match_score("src/utils.py", &utils), Some(1));
+        let go = unanchored(segs("example.com/app/a"));
+        assert_eq!(dir_match_score("a/report.go", &go), Some(1));
+        assert_eq!(dir_match_score("pkg/b/a/report.go", &go), None);
     }
 
     #[test]

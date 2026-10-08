@@ -3,7 +3,7 @@
 pub mod frameworks;
 mod import_path;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::db;
@@ -38,18 +38,33 @@ impl ReferenceResolver {
         let mut resolved_edges = Vec::new();
         let mut resolved_ids = Vec::new();
 
+        let mut imports_by_file: HashMap<String, Vec<FileImport>> = HashMap::new();
+
         for row in &unresolved {
             let reference = &row.reference;
             let from_node = db::get_node_by_id(conn, &reference.from_node_id)?;
-            let import_hint = from_node
-                .as_ref()
-                .and_then(|node| import_match_hint(conn, node, &reference.reference_name).ok())
-                .flatten();
+            let imports: &[FileImport] = match &from_node {
+                Some(node) => {
+                    if !imports_by_file.contains_key(&node.file_path) {
+                        let imports = file_imports(conn, &node.file_path)?;
+                        imports_by_file.insert(node.file_path.clone(), imports);
+                    }
+                    imports_by_file
+                        .get(&node.file_path)
+                        .map_or(&[], Vec::as_slice)
+                }
+                None => &[],
+            };
+            let context = ImportContext::new(
+                imports,
+                &reference.reference_name,
+                reference.qualifier.as_deref(),
+            );
             // `use a::b as c; c()` / `import { b as c }`: look up the
             // original name.
-            let lookup_name = import_hint
-                .as_ref()
-                .and_then(|hint| hint.export_name.as_deref())
+            let lookup_name = context
+                .symbol
+                .and_then(|import| import.export_name.as_deref())
                 .unwrap_or(&reference.reference_name);
             let candidates = match reference.reference_kind {
                 EdgeKind::Calls => {
@@ -71,7 +86,7 @@ impl ReferenceResolver {
                 conn,
                 candidates,
                 from_node.as_ref(),
-                import_hint.as_ref(),
+                &context,
                 &reference.reference_name,
                 reference.reference_kind,
             )?;
@@ -208,7 +223,7 @@ fn rank_candidates(
     conn: &rusqlite::Connection,
     nodes: Vec<Node>,
     from_node: Option<&Node>,
-    import_hint: Option<&ImportHint>,
+    context: &ImportContext<'_>,
     symbol_name: &str,
     reference_kind: EdgeKind,
 ) -> std::io::Result<Vec<Node>> {
@@ -216,45 +231,38 @@ fn rank_candidates(
         return Ok(nodes);
     };
 
-    if let Some(hint) = import_hint {
-        let export_name = hint.export_name.as_deref().unwrap_or(symbol_name);
-        if let Some(exports) = export_candidates(conn, &hint.module_path, export_name)? {
+    if let Some(import) = context.symbol {
+        let export_name = import.export_name.as_deref().unwrap_or(symbol_name);
+        if let Some(exports) = export_candidates(conn, &import.module_path, export_name)? {
             return Ok(exports);
         }
     }
 
+    // `Report.describe()` / `a.Describe()` with `Report` / `a` imported: the
+    // callee lives in that import's module, or outside the project.
+    if !context.qualifier.is_empty() {
+        let targets: Vec<_> = context
+            .qualifier
+            .iter()
+            .flat_map(|import| import.targets(import.item_name()))
+            .collect();
+        return Ok(best_import_matches(nodes, &targets).0);
+    }
+
+    let symbol_targets = context.symbol.map_or_else(Vec::new, |import| {
+        import.targets(Some(import.export_name.as_deref().unwrap_or(symbol_name)))
+    });
+    let (import_matches, nodes) = best_import_matches(nodes, &symbol_targets);
+    if !import_matches.is_empty() {
+        return Ok(import_matches);
+    }
+
     let from_dir = Path::new(&from_node.file_path).parent();
-    let mut import_matches = Vec::new();
     let mut same_file = Vec::new();
     let mut same_dir = Vec::new();
     let mut others = Vec::new();
 
-    let import_targets = import_hint.map_or_else(Vec::new, |hint| {
-        let item = hint.export_name.as_deref().unwrap_or(symbol_name);
-        import_path::import_targets(
-            &hint.module_path,
-            hint.language,
-            &hint.file_path,
-            Some(item),
-        )
-    });
-    let mut best_import_score = 0;
-
     for node in nodes {
-        let import_score = import_targets
-            .iter()
-            .filter_map(|target| import_path::match_score(&node.file_path, target))
-            .max();
-        if let Some(score) = import_score {
-            if score > best_import_score {
-                best_import_score = score;
-                import_matches.clear();
-            }
-            if score == best_import_score {
-                import_matches.push(node);
-            }
-            continue;
-        }
         if node.file_path == from_node.file_path {
             same_file.push(node);
         } else if from_dir.is_some() && Path::new(&node.file_path).parent() == from_dir {
@@ -264,9 +272,7 @@ fn rank_candidates(
         }
     }
 
-    if !import_matches.is_empty() {
-        Ok(import_matches)
-    } else if !same_file.is_empty() {
+    if !same_file.is_empty() {
         Ok(same_file)
     } else if !same_dir.is_empty() {
         Ok(same_dir)
@@ -279,33 +285,27 @@ fn rank_candidates(
     }
 }
 
-fn import_match_hint(
-    conn: &rusqlite::Connection,
-    from_node: &Node,
-    symbol_name: &str,
-) -> std::io::Result<Option<ImportHint>> {
-    let imports = db::find_nodes_by_name(conn, symbol_name)?;
-    let mut best: Option<ImportHint> = None;
-    for import_node in imports {
-        if import_node.kind != NodeKind::Import {
-            continue;
-        }
-        if import_node.file_path == from_node.file_path {
-            let (module_path, export_name) = import_node
-                .signature
-                .as_deref()
-                .and_then(parse_import_signature)
-                .unwrap_or_else(|| (import_node.name.clone(), None));
-            best = Some(ImportHint {
-                module_path,
-                export_name,
-                language: import_node.language,
-                file_path: import_node.file_path,
-            });
-            break;
+/// Split `nodes` into the best-scoring matches of `targets` and the rest.
+fn best_import_matches(nodes: Vec<Node>, targets: &[ScoredTarget]) -> (Vec<Node>, Vec<Node>) {
+    let mut best_score = 0;
+    let mut matches: Vec<Node> = Vec::new();
+    let mut rest = Vec::new();
+    for node in nodes {
+        let score = targets
+            .iter()
+            .filter_map(|target| target.score(&node.file_path))
+            .max();
+        match score {
+            Some(score) if score > best_score => {
+                best_score = score;
+                rest.append(&mut matches);
+                matches.push(node);
+            }
+            Some(score) if score == best_score => matches.push(node),
+            _ => rest.push(node),
         }
     }
-    Ok(best)
+    (matches, rest)
 }
 
 fn export_candidates(
@@ -332,13 +332,112 @@ fn export_candidates(
     }
 }
 
+/// An import node of the calling file.
 #[derive(Debug, Clone)]
-struct ImportHint {
+struct FileImport {
+    /// Name the import binds in the file (`Helper`, `a`, `*`).
+    local_name: String,
     module_path: String,
     export_name: Option<String>,
     /// Language and file of the import node, for resolving relative paths.
     language: Language,
     file_path: String,
+}
+
+impl FileImport {
+    fn from_node(node: Node) -> Self {
+        let (module_path, export_name) = node
+            .signature
+            .as_deref()
+            .and_then(parse_import_signature)
+            .unwrap_or_else(|| (node.name.clone(), None));
+        Self {
+            local_name: node.name,
+            module_path,
+            export_name,
+            language: node.language,
+            file_path: node.file_path,
+        }
+    }
+
+    /// Imported item name when the module path ends with it (`app.a.Report`,
+    /// `crate::a::Circle`). Go imports name packages, never items.
+    fn item_name(&self) -> Option<&str> {
+        (self.language != Language::Go)
+            .then(|| self.export_name.as_deref().unwrap_or(&self.local_name))
+    }
+
+    fn targets(&self, item: Option<&str>) -> Vec<ScoredTarget> {
+        let package_dir = self.language == Language::Go;
+        import_path::import_targets(&self.module_path, self.language, &self.file_path, item)
+            .into_iter()
+            .map(|target| ScoredTarget {
+                target,
+                package_dir,
+            })
+            .collect()
+    }
+
+    /// Whether `qualifier` (`Report`, `a.report`, `util::sub`) starts with
+    /// the name this import binds.
+    fn binds_qualifier(&self, qualifier: &str) -> bool {
+        qualifier
+            .strip_prefix(self.local_name.as_str())
+            .is_some_and(|rest| {
+                rest.is_empty()
+                    || rest.starts_with('.')
+                    || rest.starts_with("::")
+                    || rest.starts_with('\\')
+            })
+    }
+}
+
+/// Import target plus whether it names a package directory (Go) rather than
+/// a file.
+struct ScoredTarget {
+    target: import_path::ImportTarget,
+    package_dir: bool,
+}
+
+impl ScoredTarget {
+    fn score(&self, file_path: &str) -> Option<usize> {
+        if self.package_dir {
+            import_path::dir_match_score(file_path, &self.target)
+        } else {
+            import_path::match_score(file_path, &self.target)
+        }
+    }
+}
+
+/// Imports of the calling file relevant to one reference.
+struct ImportContext<'a> {
+    /// Import binding the referenced name itself (`import { describe }`).
+    symbol: Option<&'a FileImport>,
+    /// Imports binding the call's qualifier (`Report` in `Report.describe()`).
+    qualifier: Vec<&'a FileImport>,
+}
+
+impl<'a> ImportContext<'a> {
+    fn new(imports: &'a [FileImport], name: &str, qualifier: Option<&str>) -> Self {
+        Self {
+            symbol: imports.iter().find(|import| import.local_name == name),
+            qualifier: qualifier.map_or_else(Vec::new, |qualifier| {
+                imports
+                    .iter()
+                    .filter(|import| import.binds_qualifier(qualifier))
+                    .collect()
+            }),
+        }
+    }
+}
+
+fn file_imports(conn: &rusqlite::Connection, file_path: &str) -> std::io::Result<Vec<FileImport>> {
+    Ok(
+        db::get_nodes_by_file(conn, file_path, Some(NodeKind::Import))?
+            .into_iter()
+            .map(FileImport::from_node)
+            .collect(),
+    )
 }
 
 /// `module|export=name` → `(module, Some(name))`; `module` → `(module, None)`.

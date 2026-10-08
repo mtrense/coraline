@@ -928,6 +928,7 @@ fn walk_tree_calls(
         if let Some(source_id) = scope_stack.last() {
             if let Some(callee_name) = call_name(&node, source, language) {
                 let start = node.start_position();
+                let qualifier = call_qualifier(&node, source, language);
                 match symbol_index.by_name.get(&callee_name) {
                     Some(targets) if targets.len() == 1 => {
                         edges.push(Edge {
@@ -949,6 +950,7 @@ fn walk_tree_calls(
                             line: start.row as i64 + 1,
                             column: start.column as i64,
                             candidates: Some(targets.clone()),
+                            qualifier,
                         });
                     }
                     None => {
@@ -959,6 +961,7 @@ fn walk_tree_calls(
                             line: start.row as i64 + 1,
                             column: start.column as i64,
                             candidates: None,
+                            qualifier,
                         });
                     }
                 }
@@ -1686,10 +1689,9 @@ fn collect_import_symbols(
                     });
                 }
             }
+            // `* as name`: no fields, the name is the `identifier` child.
             "namespace_import" => {
-                let name = child
-                    .child_by_field_name("name")
-                    .or_else(|| child.child_by_field_name("alias"))
+                let name = child_of_kind(&child, "identifier")
                     .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                     .map(|s| s.to_string());
                 if let Some(name) = name {
@@ -2299,6 +2301,55 @@ fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
         .to_string();
 
     if name.is_empty() { None } else { Some(name) }
+}
+
+/// Receiver / qualifier of a call when it is a plain (possibly dotted) name:
+/// `Report` in `Report.describe()`, `a` in `a.Describe()`, `crate::util` in
+/// `crate::util::f()`, `requests` in `requests.post()`. The resolver matches
+/// it against import names. Expression receivers (`f().g()`, `$this->m()`)
+/// yield `None`.
+fn call_qualifier(node: &TsNode, source: &str, language: Language) -> Option<String> {
+    let receiver = match language {
+        Language::Java => node.child_by_field_name("object")?,
+        Language::Php => node
+            .child_by_field_name("object")
+            .or_else(|| node.child_by_field_name("scope"))?,
+        Language::Ruby => node.child_by_field_name("receiver")?,
+        Language::Go => node
+            .child_by_field_name("function")
+            .filter(|f| f.kind() == "selector_expression")?
+            .child_by_field_name("operand")?,
+        Language::Kotlin => node
+            .named_child(0)
+            .filter(|callee| callee.kind() == "navigation_expression")?
+            .named_child(0)?,
+        Language::Swift => node
+            .named_child(0)
+            .filter(|callee| callee.kind() == "navigation_expression")?
+            .child_by_field_name("target")?,
+        // Rust, JS/TS, Python, C/C++, C#: the callee is `qualifier<sep>name`.
+        _ => {
+            let callee = call_name_fields(language)
+                .iter()
+                .find_map(|field| node.child_by_field_name(field))?;
+            let text = callee.utf8_text(source.as_bytes()).ok()?.trim();
+            let end = ["::", ".", "->"]
+                .iter()
+                .filter_map(|sep| text.rfind(sep))
+                .max()?;
+            return plain_qualifier(text.get(..end)?);
+        }
+    };
+    plain_qualifier(receiver.utf8_text(source.as_bytes()).ok()?)
+}
+
+fn plain_qualifier(text: &str) -> Option<String> {
+    let text = text.trim();
+    let plain = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '\\'));
+    plain.then(|| text.to_string())
 }
 
 /// Declaration node kinds per language: `(tree-sitter kind, NodeKind, is_container)`.

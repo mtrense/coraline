@@ -100,7 +100,7 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             &["import_statement", "aliased_import", "wildcard_import"],
             &["name", "alias", "module_name"],
         ),
-        // go_import_symbols, go_callee
+        // go_import_symbols, go_callee, call_qualifier
         Language::Go => (
             &[
                 "import_spec",
@@ -114,10 +114,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "type_instantiation_expression",
                 "parenthesized_expression",
             ],
-            &["path", "name", "field", "operand", "type"],
+            &["path", "name", "field", "operand", "type", "function"],
         ),
-        // read_declaration_visibility
-        Language::Java => (&["modifiers"], &[]),
+        // read_declaration_visibility, call_qualifier
+        Language::Java => (&["modifiers"], &["object"]),
         // read_declaration_visibility, csharp_using_symbols
         Language::CSharp => (
             &[
@@ -129,7 +129,7 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["name"],
         ),
-        // kotlin_callee, import_module_path, kotlin_node_name
+        // kotlin_callee, call_qualifier, import_module_path, kotlin_node_name
         Language::Kotlin => (
             &[
                 "identifier",
@@ -151,7 +151,7 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             // kotlin_node_name: `type_alias` name, `companion_object` name
             &["type", "name"],
         ),
-        // swift_callee
+        // swift_callee, call_qualifier
         Language::Swift => (
             &[
                 "constructor_expression",
@@ -163,7 +163,8 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "class_declaration",
                 "deinit_declaration",
             ],
-            &["constructed_type", "suffix", "declaration_kind"],
+            // call_qualifier: `target`
+            &["constructed_type", "suffix", "declaration_kind", "target"],
         ),
         // c_function_name, c_callee
         Language::C => (
@@ -209,9 +210,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "namespace_name",
                 "namespace_use_clause",
             ],
-            &["body", "alias"],
+            // call_qualifier: `object`, `scope`
+            &["body", "alias", "object", "scope"],
         ),
-        // ruby_callee
+        // ruby_callee, call_qualifier
         Language::Ruby => (
             &["constant", "scope_resolution"],
             &["method", "receiver", "name"],

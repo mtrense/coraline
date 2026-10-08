@@ -208,6 +208,10 @@ pub struct UnresolvedReference {
     pub line: i64,
     pub column: i64,
     pub candidates: Option<Vec<String>>,
+    /// Receiver / qualifier of a call (`Report` in `Report.describe()`),
+    /// when it is a plain name; matched against import names.
+    #[serde(default)]
+    pub qualifier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

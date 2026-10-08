@@ -101,6 +101,20 @@ pub fn apply_incremental_migrations(conn: &Connection) -> std::io::Result<()> {
             .map_err(io_other)?;
     }
 
+    // v5: `unresolved_refs.qualifier` (call receiver such as `Report` in
+    // `Report.describe()`) for import-backed call resolution. Version 4 is
+    // the vec0 tables (`vec_ext`).
+    if !column_exists(conn, "unresolved_refs", "qualifier")? {
+        debug!("applying migration: unresolved_refs.qualifier");
+        conn.execute_batch(
+            "ALTER TABLE unresolved_refs ADD COLUMN qualifier TEXT;
+             INSERT OR IGNORE INTO schema_versions (version, applied_at, description)
+             VALUES (5, strftime('%s', 'now') * 1000,
+                     'Add unresolved_refs.qualifier for import-backed call resolution');",
+        )
+        .map_err(io_other)?;
+    }
+
     Ok(())
 }
 
@@ -348,8 +362,8 @@ pub fn insert_unresolved_refs(
         let mut stmt = tx
             .prepare(
                 "INSERT INTO unresolved_refs (
-                    from_node_id, reference_name, reference_kind, line, col, candidates
-                 ) VALUES (?, ?, ?, ?, ?, ?)",
+                    from_node_id, reference_name, reference_kind, line, col, candidates, qualifier
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(io_other)?;
 
@@ -365,6 +379,7 @@ pub fn insert_unresolved_refs(
                 unresolved.line,
                 unresolved.column,
                 candidates,
+                unresolved.qualifier,
             ])
             .map_err(io_other)?;
         }
@@ -489,8 +504,8 @@ fn insert_unresolved_ref_batch(
     let mut stmt = tx
         .prepare(
             "INSERT INTO unresolved_refs (
-                from_node_id, reference_name, reference_kind, line, col, candidates
-             ) VALUES (?, ?, ?, ?, ?, ?)",
+                from_node_id, reference_name, reference_kind, line, col, candidates, qualifier
+             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .map_err(io_other)?;
     for r in unresolved_refs {
@@ -505,6 +520,7 @@ fn insert_unresolved_ref_batch(
             r.line,
             r.column,
             candidates,
+            r.qualifier,
         ])
         .map_err(io_other)?;
     }
@@ -785,7 +801,8 @@ pub fn list_unresolved_refs(
 ) -> std::io::Result<Vec<UnresolvedRefRow>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, from_node_id, reference_name, reference_kind, line, col, candidates
+            "SELECT id, from_node_id, reference_name, reference_kind, line, col, candidates,
+                    qualifier
              FROM unresolved_refs LIMIT ?",
         )
         .map_err(io_other)?;
@@ -804,6 +821,7 @@ pub fn list_unresolved_refs(
                     line: row.get(4)?,
                     column: row.get(5)?,
                     candidates: candidates_raw.and_then(|raw| serde_json::from_str(&raw).ok()),
+                    qualifier: row.get(7)?,
                 },
             })
         })
@@ -1400,6 +1418,21 @@ mod tests {
         assert!(
             (confidence - 0.5).abs() < 1e-9,
             "expected 0.5, got {confidence}"
+        );
+    }
+
+    #[test]
+    fn migration_adds_unresolved_refs_qualifier_column() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(SCHEMA_SQL).expect("apply schema");
+        conn.execute("ALTER TABLE unresolved_refs DROP COLUMN qualifier", [])
+            .expect("drop qualifier column to simulate pre-v5 DB");
+
+        super::apply_incremental_migrations(&conn).expect("run migrations");
+
+        assert!(
+            super::column_exists(&conn, "unresolved_refs", "qualifier").expect("table_info"),
+            "migration should add unresolved_refs.qualifier"
         );
     }
 

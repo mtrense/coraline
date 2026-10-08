@@ -309,11 +309,16 @@ fn assert_calls(files: &[(&str, &str)], expected: &[&str]) {
     let actual = call_edges(temp.path());
     let missing: Vec<_> = expected.iter().filter(|e| !actual.contains(**e)).collect();
     assert!(missing.is_empty(), "missing {missing:?} in {actual:#?}");
-    let crossing = cross_root_calls(temp.path());
-    assert!(
-        crossing.is_empty(),
-        "unexpected cross-root calls {crossing:?}"
-    );
+    // Decoys: the same caller/callee pair must not also resolve elsewhere.
+    let decoys: Vec<_> = actual
+        .iter()
+        .filter(|a| {
+            expected
+                .iter()
+                .any(|e| *a != e && a.split(" @ ").next() == e.split(" @ ").next())
+        })
+        .collect();
+    assert!(decoys.is_empty(), "unexpected {decoys:?} in {actual:#?}");
 }
 
 /// Same project as the #43 mirror: the crate-relative import resolves to the
@@ -404,5 +409,227 @@ fn python_dotted_and_relative_imports_resolve() {
             "heartbeat -> load @ agent/core/util.py",
             "heartbeat -> post @ agent/net/__init__.py",
         ],
+    );
+}
+
+/// `caller -> qualifier.callee` for unresolved call refs that have a qualifier.
+fn qualified_refs(project_path: &Path) -> BTreeSet<String> {
+    query_set(
+        project_path,
+        "SELECT n.name || ' -> ' || u.qualifier || '.' || u.reference_name
+           FROM unresolved_refs u JOIN nodes n ON n.id = u.from_node_id
+          WHERE u.qualifier IS NOT NULL",
+    )
+}
+
+#[test]
+fn call_qualifiers_are_stored() {
+    let temp = index_project(&[
+        (
+            "j/A.java",
+            "class A { void j() { Ext.run(); app.ext.Ext.go(); } }\n",
+        ),
+        ("k/a.kt", "fun k() { Ext.run(); app.ext.go() }\n"),
+        ("s/a.swift", "func s() { Ext.run() }\n"),
+        ("g/a.go", "package g\n\nfunc G() { ext.Run() }\n"),
+        ("p/a.py", "def p():\n    ext.sub.run()\n"),
+        ("t/a.ts", "function t() { ext.run(); this.go(); }\n"),
+        ("r/a.rs", "fn r() { ext::sub::run(); Ext::go(); }\n"),
+        ("c/a.cs", "class C { void Cs() { Ext.Run(); } }\n"),
+        ("c/a.cpp", "void cpp() { ext::run(); }\n"),
+        (
+            "h/a.php",
+            "<?php\nfunction php() { Ext::run(); \\App\\Ext::go(); $x->no(); }\n",
+        ),
+        ("b/a.rb", "def rb\n  Ext::Sub.run()\nend\n"),
+    ]);
+    let refs = qualified_refs(temp.path());
+    for expected in [
+        "j -> Ext.run",
+        "j -> app.ext.Ext.go",
+        "k -> Ext.run",
+        "k -> app.ext.go",
+        "s -> Ext.run",
+        "G -> ext.Run",
+        "p -> ext.sub.run",
+        "t -> ext.run",
+        "t -> this.go",
+        "r -> ext::sub.run",
+        "r -> Ext.go",
+        "Cs -> Ext.Run",
+        "cpp -> ext.run",
+        "php -> Ext.run",
+        "php -> \\App\\Ext.go",
+        "rb -> Ext::Sub.run",
+    ] {
+        assert!(refs.contains(expected), "missing {expected} in {refs:#?}");
+    }
+    assert!(
+        !refs.iter().any(|r| r.contains("$x")),
+        "expression receivers have no qualifier: {refs:#?}"
+    );
+}
+
+/// `Util.format(..)` with `Util` imported resolves into the imported class,
+/// not to the same-dir `format` nor to an unrelated `Util`.
+#[test]
+fn java_qualifier_resolves_through_class_import() {
+    assert_calls(
+        &[
+            (
+                "src/main/java/com/example/app/App.java",
+                "package com.example.app;\n\
+                 \n\
+                 import com.example.util.Util;\n\
+                 \n\
+                 public class App {\n\
+                 \x20   String render(int x) { return Util.format(x); }\n\
+                 }\n",
+            ),
+            (
+                "src/main/java/com/example/app/Format.java",
+                "package com.example.app;\n\
+                 \n\
+                 class Format {\n\
+                 \x20   static String format(int x) { return \"\"; }\n\
+                 }\n",
+            ),
+            (
+                "src/main/java/com/example/util/Util.java",
+                "package com.example.util;\n\
+                 \n\
+                 public class Util {\n\
+                 \x20   public static String format(int x) { return \"\"; }\n\
+                 }\n",
+            ),
+            (
+                "src/test/java/other/Util.java",
+                "package other;\n\
+                 \n\
+                 public class Util {\n\
+                 \x20   public static String format(int x) { return \"\"; }\n\
+                 }\n",
+            ),
+        ],
+        &["render -> format @ src/main/java/com/example/util/Util.java"],
+    );
+}
+
+/// `model.Describe()` resolves into the imported package dir; `fmt.Println`
+/// never falls back to a same-dir `Println`.
+#[test]
+fn go_qualifier_resolves_through_package_import() {
+    let files: &[(&str, &str)] = &[
+        (
+            "svc/app.go",
+            "package svc\n\
+             \n\
+             import (\n\
+             \x20   \"fmt\"\n\
+             \x20   \"example.com/app/internal/model\"\n\
+             )\n\
+             \n\
+             func Run() {\n\
+             \x20   fmt.Println(model.Describe())\n\
+             }\n",
+        ),
+        ("svc/print.go", "package svc\n\nfunc Println(s string) {}\n"),
+        (
+            "internal/model/model.go",
+            "package model\n\nfunc Describe() string { return \"\" }\n",
+        ),
+        (
+            "legacy/model/model.go",
+            "package model\n\nfunc Describe() string { return \"\" }\n",
+        ),
+    ];
+    assert_calls(files, &["Run -> Describe @ internal/model/model.go"]);
+    let temp = index_project(files);
+    let calls = call_edges(temp.path());
+    assert!(
+        !calls.contains("Run -> Println @ svc/print.go"),
+        "fmt.Println must not resolve to a local Println: {calls:#?}"
+    );
+}
+
+#[test]
+fn python_qualifier_resolves_through_module_import() {
+    assert_calls(
+        &[
+            (
+                "agent/heartbeat.py",
+                "import agent.util\n\
+                 import agent.net as net\n\
+                 \n\
+                 \n\
+                 def heartbeat():\n\
+                 \x20   net.post(agent.util.load())\n",
+            ),
+            ("agent/util.py", "def load():\n    return ''\n"),
+            ("agent/net.py", "def post(url):\n    pass\n"),
+            ("frontend/net.py", "def post(url):\n    pass\n"),
+        ],
+        &[
+            "heartbeat -> load @ agent/util.py",
+            "heartbeat -> post @ agent/net.py",
+        ],
+    );
+}
+
+#[test]
+fn rust_qualifier_resolves_through_module_and_type_imports() {
+    assert_calls(
+        &[
+            (
+                "src/b/app.rs",
+                "use crate::a::shapes;\n\
+                 use crate::a::model::Circle;\n\
+                 \n\
+                 pub fn run() {\n\
+                 \x20   shapes::square(Circle::create());\n\
+                 }\n",
+            ),
+            (
+                "src/a/shapes.rs",
+                "pub fn square(x: f64) -> f64 { x * x }\n",
+            ),
+            (
+                "src/a/model.rs",
+                "pub struct Circle;\n\
+                 impl Circle {\n\
+                 \x20   pub fn create() -> f64 { 1.0 }\n\
+                 }\n",
+            ),
+            ("src/c/shapes.rs", "pub fn square(x: f64) -> f64 { x }\n"),
+        ],
+        &[
+            "run -> square @ src/a/shapes.rs",
+            "run -> create @ src/a/model.rs",
+        ],
+    );
+}
+
+#[test]
+fn typescript_namespace_import_resolves_qualified_calls() {
+    assert_calls(
+        &[
+            (
+                "agent/src/heartbeat.ts",
+                "import * as util from '../lib/util';\n\
+                 \n\
+                 export function heartbeat(): void {\n\
+                 \x20 util.load();\n\
+                 }\n",
+            ),
+            (
+                "agent/lib/util.ts",
+                "export function load(): string { return ''; }\n",
+            ),
+            (
+                "frontend/lib/util.ts",
+                "export function load(): string { return ''; }\n",
+            ),
+        ],
+        &["heartbeat -> load @ agent/lib/util.ts"],
     );
 }
