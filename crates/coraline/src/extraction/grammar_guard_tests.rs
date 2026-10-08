@@ -96,12 +96,13 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
         Language::Python => (&[], &["name", "alias"]),
         Language::Go => (&[], &["alias"]),
         Language::Java | Language::CSharp | Language::Blazor => (&["modifiers"], &[]),
-        // kotlin_callee, import_module_path
+        // kotlin_callee, import_module_path, kotlin_node_name
         Language::Kotlin => (
             &[
                 "identifier",
                 "navigation_expression",
                 "qualified_identifier",
+                "variable_declaration",
             ],
             &[],
         ),

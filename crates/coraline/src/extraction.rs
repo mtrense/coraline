@@ -745,7 +745,7 @@ fn walk_tree_collect(
         None
     } else {
         match kind {
-            Some(_) => node_name(&node, source),
+            Some(_) => node_name(&node, source, language),
             None => None,
         }
     };
@@ -885,7 +885,7 @@ fn walk_tree_calls(
 ) {
     let (kind, _) = map_node_kind(node.kind(), language);
     let name = if kind.is_some() {
-        node_name(&node, source)
+        node_name(&node, source, language)
     } else {
         None
     };
@@ -964,7 +964,13 @@ fn walk_tree_calls(
     }
 }
 
-fn node_name(node: &TsNode, source: &str) -> Option<String> {
+fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
+    if language == Language::Kotlin {
+        if let Some(name) = kotlin_node_name(node, source) {
+            return Some(name);
+        }
+    }
+
     let name_node = node
         .child_by_field_name("name")
         .or_else(|| node.child_by_field_name("identifier"))
@@ -973,6 +979,25 @@ fn node_name(node: &TsNode, source: &str) -> Option<String> {
 
     name_node
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .map(|s| s.to_string())
+}
+
+fn child_of_kind<'tree>(node: &TsNode<'tree>, kind: &str) -> Option<TsNode<'tree>> {
+    node.children(&mut node.walk()).find(|c| c.kind() == kind)
+}
+
+/// Names of Kotlin declarations that have no `name` field.
+fn kotlin_node_name(node: &TsNode, source: &str) -> Option<String> {
+    let name_node = match node.kind() {
+        // `val x = …`; destructuring declarations (`val (a, b) = …`) have
+        // no single name and are skipped.
+        "property_declaration" => child_of_kind(node, "variable_declaration")
+            .and_then(|decl| child_of_kind(&decl, "identifier"))?,
+        _ => return None,
+    };
+    name_node
+        .utf8_text(source.as_bytes())
+        .ok()
         .map(|s| s.to_string())
 }
 

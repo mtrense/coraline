@@ -49,6 +49,14 @@ fn call_pairs(project_path: &Path) -> BTreeSet<String> {
     )
 }
 
+/// `kind:name` for every node except files.
+fn node_set(project_path: &Path) -> BTreeSet<String> {
+    query_set(
+        project_path,
+        "SELECT kind || ':' || name FROM nodes WHERE kind != 'file'",
+    )
+}
+
 fn assert_contains_all(actual: &BTreeSet<String>, expected: &[&str]) {
     let missing: Vec<_> = expected.iter().filter(|e| !actual.contains(**e)).collect();
     assert!(missing.is_empty(), "missing {missing:?} in {actual:#?}");
@@ -152,4 +160,22 @@ fn kotlin_import_paths_handle_alias_and_wildcard() {
     .map(|s| (*s).to_string())
     .collect();
     assert_eq!(imports, expected);
+}
+
+#[test]
+fn kotlin_properties_are_extracted() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "private val secret = 1\n\
+         var counter: Int = 0\n\
+         \n\
+         object Registry {\n\
+         \x20   val shapes = mutableListOf<String>()\n\
+         }\n",
+    )]);
+
+    assert_contains_all(
+        &node_set(temp.path()),
+        &["property:secret", "property:counter", "property:shapes"],
+    );
 }
