@@ -149,7 +149,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
             "kind:function_call_expression",
             "kind:struct_declaration",
         ],
-        Language::Kotlin => &["kind:interface_declaration"],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
         Language::Blazor => &[
             "kind:component_definition",

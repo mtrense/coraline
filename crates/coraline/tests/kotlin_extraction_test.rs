@@ -179,3 +179,28 @@ fn kotlin_properties_are_extracted() {
         &["property:secret", "property:counter", "property:shapes"],
     );
 }
+
+#[test]
+fn kotlin_interfaces_are_extracted() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "interface Named {\n\
+         \x20   fun name(): String\n\
+         }\n\
+         \n\
+         fun interface Action {\n\
+         \x20   fun run()\n\
+         }\n\
+         \n\
+         class Impl : Named {\n\
+         \x20   override fun name(): String = \"impl\"\n\
+         }\n",
+    )]);
+
+    let nodes = node_set(temp.path());
+    assert_contains_all(
+        &nodes,
+        &["interface:Named", "interface:Action", "class:Impl"],
+    );
+    assert!(!nodes.contains("class:Named"), "{nodes:#?}");
+}

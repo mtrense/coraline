@@ -703,7 +703,7 @@ fn walk_tree_collect(
     symbol_index: &mut SymbolIndex,
     now_ms: i64,
 ) {
-    let (kind, is_container) = map_node_kind(node.kind(), language);
+    let (kind, is_container) = node_kind(&node, language);
 
     if let Some(NodeKind::Import) = kind {
         if let Some(parent_id) = parent_id.clone() {
@@ -883,7 +883,7 @@ fn walk_tree_calls(
     unresolved_refs: &mut Vec<UnresolvedReference>,
     scope_stack: &mut Vec<String>,
 ) {
-    let (kind, _) = map_node_kind(node.kind(), language);
+    let (kind, _) = node_kind(&node, language);
     let name = if kind.is_some() {
         node_name(&node, source, language)
     } else {
@@ -2015,7 +2015,6 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("function_declaration", NodeKind::Function, false),
             ("property_declaration", NodeKind::Property, false),
             ("class_declaration", NodeKind::Class, true),
-            ("interface_declaration", NodeKind::Interface, true),
             ("object_declaration", NodeKind::Class, true),
             ("enum_class_body", NodeKind::Enum, true),
             ("import", NodeKind::Import, false),
@@ -2040,6 +2039,31 @@ fn map_node_kind(kind: &str, language: Language) -> (Option<NodeKind>, bool) {
         .map_or((None, false), |&(_, node_kind, container)| {
             (Some(node_kind), container)
         })
+}
+
+/// Map a tree-sitter node to a `NodeKind`, refining the kind-only mapping
+/// with node context where the grammar shares one node kind between several
+/// declaration kinds.
+fn node_kind(node: &TsNode, language: Language) -> (Option<NodeKind>, bool) {
+    let mapped = map_node_kind(node.kind(), language);
+    match (language, mapped) {
+        (Language::Kotlin, (Some(NodeKind::Class), container))
+            if node.kind() == "class_declaration" =>
+        {
+            (Some(kotlin_class_kind(node)), container)
+        }
+        _ => mapped,
+    }
+}
+
+/// Kotlin `class_declaration` covers classes and interfaces (`interface`
+/// keyword child).
+fn kotlin_class_kind(node: &TsNode) -> NodeKind {
+    if child_of_kind(node, "interface").is_some() {
+        NodeKind::Interface
+    } else {
+        NodeKind::Class
+    }
 }
 
 fn scan_directory(
