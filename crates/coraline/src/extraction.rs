@@ -1762,15 +1762,36 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         Language::Php => &["function"],
         Language::Ruby => &["method"],
         Language::Swift => &["function"],
-        Language::Kotlin => &["callee"],
+        // Kotlin `call_expression` has no fields; see `kotlin_callee`.
         _ => &[],
     }
 }
 
+/// Callee of a Kotlin `call_expression`: its first named child is the callee
+/// expression, followed by `type_arguments` / `value_arguments` /
+/// `annotated_lambda`. For `a.b.foo()` (`navigation_expression`) the callee
+/// is the last `identifier`. Other callee shapes (calls on call results,
+/// lambdas, ...) have no usable name.
+fn kotlin_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    let callee = node.named_child(0)?;
+    match callee.kind() {
+        "identifier" => Some(callee),
+        "navigation_expression" => callee
+            .named_children(&mut callee.walk())
+            .last()
+            .filter(|n| n.kind() == "identifier"),
+        _ => None,
+    }
+}
+
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
-    let callee = call_name_fields(language)
-        .iter()
-        .find_map(|field| node.child_by_field_name(field))?;
+    let callee = if language == Language::Kotlin {
+        kotlin_callee(node)?
+    } else {
+        call_name_fields(language)
+            .iter()
+            .find_map(|field| node.child_by_field_name(field))?
+    };
 
     let raw = callee.utf8_text(source.as_bytes()).ok()?.to_string();
     let trimmed = raw.trim();
