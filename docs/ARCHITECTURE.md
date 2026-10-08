@@ -25,6 +25,7 @@ crates/coraline/src/
 ├── clustering.rs       # Louvain community detection + process tracing (Phase 5.1)
 ├── resolution/         # Cross-file reference resolution
 │   ├── mod.rs          # Core resolver + framework fallback
+│   ├── import_path.rs  # Import module paths → project files
 │   └── frameworks/     # Language/framework-specific resolvers
 │       ├── mod.rs      # FrameworkResolver trait + registry
 │       ├── rust.rs     # crate::, super::, self:: resolution
@@ -139,7 +140,12 @@ Steps 6 and 7 run as part of every `coraline index` and `coraline sync` after ex
 
 Resolution happens in two passes:
 
-1. **Name-based**: The `resolution::resolve_unresolved` function looks up reference names in the DB using ranked candidate scoring (file proximity, name similarity, kind match).
+1. **Name-based**: The `resolution::resolve_unresolved` function looks up reference names in the DB and ranks the candidates; a reference resolves only if the best tier has exactly one candidate:
+   1. Declarations behind the import that binds the name (`import { describe }`, `use crate::a::describe`, Kotlin `import app.a.describe`; Export nodes are followed to the declaration). Import module paths are mapped to project files per language (`resolution/import_path.rs`: dotted / `::` / `\` paths, relative `./`, `.x`, `crate::`, `super::`, quoted includes) or to the packages / namespaces files declare.
+   2. If the call's qualifier names an import (`Report.describe()`, Go `model.Describe()`, `util.load()`), only declarations in that import's module, otherwise nothing.
+   3. Same file, then same directory.
+   4. Names in scope without naming the callee: wildcard imports (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++ includes, C# `using` namespaces, and the caller's own package / namespace.
+   For calls there is no further fallback: same-named functions in unrelated directories are never linked by name alone (upstream #43).
 
 2. **Framework fallback**: When no candidates score above threshold, `framework_fallback` is called. The registered `FrameworkResolver` implementations detect the active framework (by checking for `Cargo.toml`, `package.json`, `artisan`, `.csproj`, etc.) and return candidate file paths. Nodes from those files are then loaded and filtered by the referenced symbol name.
 
@@ -193,6 +199,8 @@ DB schema changes after v1 are additive: each new column is gated by a `PRAGMA t
 
 - v2 — `edges.confidence REAL NOT NULL DEFAULT 1.0` (Phase 5.2)
 - v3 — `nodes.cluster_id INTEGER`, `edges.process_id INTEGER` (Phase 5.1)
+- v4 — vec0 embedding tables (`--features vec-ext`, created by `vec_ext`)
+- v5 — `unresolved_refs.qualifier TEXT`: call receiver / qualifier (`Report` in `Report.describe()`) for import-backed resolution
 
 All migrations are idempotent — the `column_exists` guard makes re-running safe.
 
