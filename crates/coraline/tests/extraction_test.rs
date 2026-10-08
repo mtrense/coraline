@@ -346,3 +346,35 @@ fn test_kotlin_script_files_are_kotlin() {
         "Should extract Kotlin function from .kts file"
     );
 }
+
+#[test]
+fn test_unknown_language_files_are_not_indexed() {
+    let (_temp, project_root) = setup_test_db();
+    let project_path = Path::new(&project_root);
+
+    write_project_files(
+        project_path,
+        &[
+            ("notes/readme.txt", "just some text\n"),
+            ("src/lib.rs", "pub fn known() {}\n"),
+        ],
+    );
+
+    let mut cfg = config::create_default_config(project_path);
+    cfg.include.push("**/*.txt".to_string());
+    extraction::index_all(project_path, &cfg, false, None).expect("Failed to index project");
+
+    let conn = db::open_database(project_path).expect("Failed to open database");
+    assert!(
+        db::get_file_record(&conn, "src/lib.rs")
+            .expect("Failed to query file record")
+            .is_some(),
+        "supported file should be indexed"
+    );
+    assert!(
+        db::get_file_record(&conn, "notes/readme.txt")
+            .expect("Failed to query file record")
+            .is_none(),
+        "file of unknown language should not be indexed"
+    );
+}

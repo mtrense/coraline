@@ -251,7 +251,6 @@ pub const fn is_language_supported(language: &Language) -> bool {
             | Language::Liquid
             | Language::Markdown
             | Language::Blazor
-            | Language::Unknown
     )
 }
 
