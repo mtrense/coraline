@@ -1,13 +1,14 @@
 #![deny(unsafe_code)]
 
 pub mod frameworks;
+mod import_path;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::db;
 use crate::types::Node;
-use crate::types::{Edge, EdgeKind, NodeKind};
+use crate::types::{Edge, EdgeKind, Language, NodeKind};
 
 #[derive(Debug, Default)]
 pub struct ReferenceResolver;
@@ -40,6 +41,16 @@ impl ReferenceResolver {
         for row in &unresolved {
             let reference = &row.reference;
             let from_node = db::get_node_by_id(conn, &reference.from_node_id)?;
+            let import_hint = from_node
+                .as_ref()
+                .and_then(|node| import_match_hint(conn, node, &reference.reference_name).ok())
+                .flatten();
+            // `use a::b as c; c()` / `import { b as c }`: look up the
+            // original name.
+            let lookup_name = import_hint
+                .as_ref()
+                .and_then(|hint| hint.export_name.as_deref())
+                .unwrap_or(&reference.reference_name);
             let candidates = match reference.reference_kind {
                 EdgeKind::Calls => {
                     // Prefer extractor-provided candidate IDs for better locality/precision.
@@ -48,10 +59,7 @@ impl ReferenceResolver {
                         .as_ref()
                         .map_or_else(Vec::new, |ids| nodes_from_ids(conn, ids));
                     if from_ids.is_empty() {
-                        filter_by_call_kind(db::find_nodes_by_name(
-                            conn,
-                            &reference.reference_name,
-                        )?)
+                        filter_by_call_kind(db::find_nodes_by_name(conn, lookup_name)?)
                     } else {
                         filter_by_call_kind(from_ids)
                     }
@@ -59,10 +67,6 @@ impl ReferenceResolver {
                 _ => db::find_nodes_by_name(conn, &reference.reference_name)?,
             };
 
-            let import_hint = from_node
-                .as_ref()
-                .and_then(|node| import_match_hint(conn, node, &reference.reference_name).ok())
-                .flatten();
             let candidates = rank_candidates(
                 conn,
                 candidates,
@@ -225,9 +229,30 @@ fn rank_candidates(
     let mut same_dir = Vec::new();
     let mut others = Vec::new();
 
+    let import_targets = import_hint.map_or_else(Vec::new, |hint| {
+        let item = hint.export_name.as_deref().unwrap_or(symbol_name);
+        import_path::import_targets(
+            &hint.module_path,
+            hint.language,
+            &hint.file_path,
+            Some(item),
+        )
+    });
+    let mut best_import_score = 0;
+
     for node in nodes {
-        if import_hint.is_some_and(|hint| matches_import_hint(&node.file_path, &hint.module_path)) {
-            import_matches.push(node);
+        let import_score = import_targets
+            .iter()
+            .filter_map(|target| import_path::match_score(&node.file_path, target))
+            .max();
+        if let Some(score) = import_score {
+            if score > best_import_score {
+                best_import_score = score;
+                import_matches.clear();
+            }
+            if score == best_import_score {
+                import_matches.push(node);
+            }
             continue;
         }
         if node.file_path == from_node.file_path {
@@ -266,61 +291,21 @@ fn import_match_hint(
             continue;
         }
         if import_node.file_path == from_node.file_path {
-            if let Some(hint) = import_node
+            let (module_path, export_name) = import_node
                 .signature
                 .as_deref()
                 .and_then(parse_import_signature)
-            {
-                best = Some(hint);
-                break;
-            }
-
+                .unwrap_or_else(|| (import_node.name.clone(), None));
             best = Some(ImportHint {
-                module_path: import_node.name,
-                export_name: None,
+                module_path,
+                export_name,
+                language: import_node.language,
+                file_path: import_node.file_path,
             });
             break;
         }
     }
     Ok(best)
-}
-
-fn matches_import_hint(file_path: &str, hint: &str) -> bool {
-    let hint_clean = hint
-        .rsplit("::")
-        .next()
-        .unwrap_or(hint)
-        .trim_end_matches(".ts")
-        .trim_end_matches(".tsx")
-        .trim_end_matches(".rs");
-    let path_no_ext = file_path
-        .trim_end_matches(".ts")
-        .trim_end_matches(".tsx")
-        .trim_end_matches(".rs");
-
-    if path_no_ext.ends_with(hint_clean) {
-        return true;
-    }
-
-    let file_path_buf = PathBuf::from(file_path);
-    let file_name = file_path_buf
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-    if file_name == hint_clean {
-        return true;
-    }
-
-    if file_path.ends_with("/mod.rs") {
-        let parent_name = Path::new(file_path)
-            .parent()
-            .and_then(|p| p.file_name())
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        return parent_name == hint_clean;
-    }
-
-    false
 }
 
 fn export_candidates(
@@ -351,24 +336,22 @@ fn export_candidates(
 struct ImportHint {
     module_path: String,
     export_name: Option<String>,
+    /// Language and file of the import node, for resolving relative paths.
+    language: Language,
+    file_path: String,
 }
 
-fn parse_import_signature(signature: &str) -> Option<ImportHint> {
+/// `module|export=name` → `(module, Some(name))`; `module` → `(module, None)`.
+fn parse_import_signature(signature: &str) -> Option<(String, Option<String>)> {
     if signature.trim().is_empty() {
         return None;
     }
 
     if let Some((module_path, export_name)) = signature.split_once("|export=") {
-        return Some(ImportHint {
-            module_path: module_path.to_string(),
-            export_name: Some(export_name.to_string()),
-        });
+        return Some((module_path.to_string(), Some(export_name.to_string())));
     }
 
-    Some(ImportHint {
-        module_path: signature.to_string(),
-        export_name: None,
-    })
+    Some((signature.to_string(), None))
 }
 
 #[cfg(test)]

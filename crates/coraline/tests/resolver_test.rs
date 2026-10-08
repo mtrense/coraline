@@ -301,3 +301,108 @@ fn no_import_no_edge_c() {
         ("frontend/client.c", "void post(const char *url) {}\n"),
     ]);
 }
+
+/// Index `files` and assert every `caller -> callee @ callee_file` edge in
+/// `expected` is stored.
+fn assert_calls(files: &[(&str, &str)], expected: &[&str]) {
+    let temp = index_project(files);
+    let actual = call_edges(temp.path());
+    let missing: Vec<_> = expected.iter().filter(|e| !actual.contains(**e)).collect();
+    assert!(missing.is_empty(), "missing {missing:?} in {actual:#?}");
+    let crossing = cross_root_calls(temp.path());
+    assert!(
+        crossing.is_empty(),
+        "unexpected cross-root calls {crossing:?}"
+    );
+}
+
+/// Same project as the #43 mirror: the crate-relative import resolves to the
+/// agent's own `settings/config.rs`, not the frontend's `config.rs`.
+#[test]
+fn rust_crate_import_resolves_within_the_crate() {
+    assert_calls(
+        &[
+            (
+                "raccoon-agent/src/beat/heartbeat.rs",
+                "use crate::settings::config::load;\n\
+                 use super::super::util::helper as aliased;\n\
+                 \n\
+                 pub fn heartbeat() {\n\
+                 \x20   load();\n\
+                 \x20   aliased();\n\
+                 }\n",
+            ),
+            (
+                "raccoon-agent/src/settings/config.rs",
+                "pub fn load() -> u32 {\n    0\n}\n",
+            ),
+            ("raccoon-agent/src/util.rs", "pub fn helper() {}\n"),
+            (
+                "raccoon-frontend/src/config.rs",
+                "pub fn load() -> u32 {\n    1\n}\n",
+            ),
+            ("raccoon-frontend/src/util.rs", "pub fn helper() {}\n"),
+        ],
+        &[
+            "heartbeat -> load @ raccoon-agent/src/settings/config.rs",
+            "heartbeat -> helper @ raccoon-agent/src/util.rs",
+        ],
+    );
+}
+
+#[test]
+fn typescript_relative_import_resolves_against_the_importing_file() {
+    assert_calls(
+        &[
+            (
+                "agent/src/heartbeat.ts",
+                "import { load } from '../lib/util';\n\
+                 import { post as send } from './net.js';\n\
+                 \n\
+                 export function heartbeat(): void {\n\
+                 \x20 send(load());\n\
+                 }\n",
+            ),
+            (
+                "agent/lib/util.ts",
+                "export function load(): string { return ''; }\n",
+            ),
+            (
+                "agent/src/net.ts",
+                "export function post(url: string): void {}\n",
+            ),
+            (
+                "frontend/lib/util.ts",
+                "export function load(): string { return ''; }\n",
+            ),
+        ],
+        &[
+            "heartbeat -> load @ agent/lib/util.ts",
+            "heartbeat -> post @ agent/src/net.ts",
+        ],
+    );
+}
+
+#[test]
+fn python_dotted_and_relative_imports_resolve() {
+    assert_calls(
+        &[
+            (
+                "agent/app/heartbeat.py",
+                "from agent.core.util import load\n\
+                 from ..net import post\n\
+                 \n\
+                 \n\
+                 def heartbeat():\n\
+                 \x20   post(load())\n",
+            ),
+            ("agent/core/util.py", "def load():\n    return ''\n"),
+            ("agent/net/__init__.py", "def post(url):\n    pass\n"),
+            ("frontend/core/util.py", "def load():\n    return ''\n"),
+        ],
+        &[
+            "heartbeat -> load @ agent/core/util.py",
+            "heartbeat -> post @ agent/net/__init__.py",
+        ],
+    );
+}
