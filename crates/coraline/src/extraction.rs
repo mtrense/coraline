@@ -2076,6 +2076,24 @@ fn ruby_callee<'tree>(node: &TsNode<'tree>, source: &str) -> Option<TsNode<'tree
     Some(method)
 }
 
+/// Callee of a Go `call_expression`: the `function` expression unwrapped to
+/// its name (`f`, `pkg.F` / `x.m` → field, `F[T]`, `(f)`). Calls of func
+/// literals or call results (`func() {…}()`, `f()()`) have no name.
+fn go_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    let mut current = node.child_by_field_name("function")?;
+    loop {
+        current = match current.kind() {
+            "identifier" | "field_identifier" | "type_identifier" => return Some(current),
+            "selector_expression" => current.child_by_field_name("field")?,
+            "qualified_type" => current.child_by_field_name("name")?,
+            "index_expression" => current.child_by_field_name("operand")?,
+            "type_instantiation_expression" => current.child_by_field_name("type")?,
+            "parenthesized_expression" => current.named_child(0)?,
+            _ => return None,
+        };
+    }
+}
+
 /// Callee of a PHP call. Namespaced names (`\App\fmt()`, `new \App\Foo()`)
 /// are reduced to their last segment; `new` has no fields, the class is a
 /// `name` / `qualified_name` child.
@@ -2102,6 +2120,7 @@ fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
         Language::Ruby => ruby_callee(node, source)?,
         Language::C | Language::Cpp => c_callee(node)?,
         Language::Php => php_callee(node)?,
+        Language::Go => go_callee(node)?,
         _ => call_name_fields(language)
             .iter()
             .find_map(|field| node.child_by_field_name(field))?,

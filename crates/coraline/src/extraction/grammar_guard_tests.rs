@@ -94,8 +94,22 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             &["name", "alias", "source"],
         ),
         Language::Python => (&[], &["name", "alias"]),
-        // go_import_symbols
-        Language::Go => (&["import_spec", "import_spec_list"], &["path", "name"]),
+        // go_import_symbols, go_callee
+        Language::Go => (
+            &[
+                "import_spec",
+                "import_spec_list",
+                "identifier",
+                "field_identifier",
+                "type_identifier",
+                "selector_expression",
+                "qualified_type",
+                "index_expression",
+                "type_instantiation_expression",
+                "parenthesized_expression",
+            ],
+            &["path", "name", "field", "operand", "type"],
+        ),
         Language::Java | Language::CSharp => (&["modifiers"], &[]),
         // kotlin_callee, import_module_path, kotlin_node_name
         Language::Kotlin => (
