@@ -11,12 +11,11 @@
 //! - `b/app`: imports from `a`; `main` calls the same-file `run`; `run` calls
 //!   `describe` (cross-dir) and constructs a `Circle`.
 //!
-//! PR 1 (extraction) asserts same-file / same-dir calls and imports. The
-//! cross-dir call needs the resolver work of PR 2 and the inheritance /
-//! instantiation edges need PR 3; they are recorded per fixture
-//! (`cross_dir_calls`, `inherits`, `instantiates`) and asserted by the
-//! `#[ignore]`d tests at the bottom. Remove the `#[ignore]` once the
-//! respective PR lands.
+//! Asserted: same-file / same-dir calls, imports and import- / package- /
+//! module-backed cross-dir calls. Inheritance / instantiation edges
+//! (`inherits`, `instantiates`) are recorded per fixture and asserted by
+//! the `#[ignore]`d tests at the bottom; remove the `#[ignore]` once they
+//! are extracted.
 #![allow(clippy::expect_used)]
 
 mod common;
@@ -818,7 +817,6 @@ fn callers_and_callees_return_stored_calls() {
 }
 
 #[test]
-#[ignore = "PR 2: resolver does not match cross-package/cross-dir calls yet (plan §5)"]
 fn cross_dir_calls_are_stored() {
     check_all(|fixture, path| {
         missing(
