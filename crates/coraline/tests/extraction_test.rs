@@ -275,3 +275,44 @@ fn test_cross_file_references() {
 
     assert!(!edges.is_empty(), "Should have import edges");
 }
+
+fn write_project_files(project_path: &Path, files: &[(&str, &str)]) {
+    for (rel, content) in files {
+        let path = project_path.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("Failed to create directory");
+        }
+        std::fs::write(path, content).expect("Failed to write file");
+    }
+}
+
+#[test]
+fn test_default_config_indexes_kotlin_and_swift() {
+    let (_temp, project_root) = setup_test_db();
+    let project_path = Path::new(&project_root);
+
+    write_project_files(
+        project_path,
+        &[
+            ("src/Main.kt", "fun main() {\n    println(\"hi\")\n}\n"),
+            ("build.gradle.kts", "plugins {\n    kotlin(\"jvm\")\n}\n"),
+            (
+                "Sources/App.swift",
+                "func greet() {\n    print(\"hi\")\n}\n",
+            ),
+        ],
+    );
+
+    let cfg = config::create_default_config(project_path);
+    extraction::index_all(project_path, &cfg, false, None).expect("Failed to index project");
+
+    let conn = db::open_database(project_path).expect("Failed to open database");
+    for path in ["src/Main.kt", "build.gradle.kts", "Sources/App.swift"] {
+        assert!(
+            db::get_file_record(&conn, path)
+                .expect("Failed to query file record")
+                .is_some(),
+            "{path} should be indexed with the default config"
+        );
+    }
+}

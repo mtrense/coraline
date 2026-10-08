@@ -115,6 +115,9 @@ pub fn default_include_patterns() -> Vec<String> {
         "**/*.cs",
         "**/*.php",
         "**/*.rb",
+        "**/*.kt",
+        "**/*.kts",
+        "**/*.swift",
         "**/*.liquid",
         "**/*.razor",
     ]
@@ -721,7 +724,7 @@ include_patterns = [
   "**/*.rs", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx",
   "**/*.py", "**/*.go", "**/*.java", "**/*.cs", "**/*.cpp",
   "**/*.c", "**/*.h", "**/*.rb", "**/*.php", "**/*.swift",
-  "**/*.kt", "**/*.razor",
+  "**/*.kt", "**/*.kts", "**/*.razor",
 ]
 exclude_patterns = [
   "**/.git/**", "**/target/**", "**/node_modules/**",
