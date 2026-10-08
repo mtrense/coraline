@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    assert_contains_all, assert_contains_none, call_pairs, import_set, index_project, node_set,
-    query_set,
+    assert_contains_all, assert_contains_none, call_pairs, import_set, index_project,
+    instantiation_pairs, node_set, query_set,
 };
 
 #[test]
@@ -37,9 +37,9 @@ fn swift_calls_are_extracted() {
             "build -> safe",
             "build -> map",
             "build -> filter",
-            "build -> Box",
         ],
     );
+    assert_contains_all(&instantiation_pairs(temp.path()), &["build -> Box"]);
 }
 
 #[test]

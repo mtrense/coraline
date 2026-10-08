@@ -2,7 +2,9 @@
 
 mod common;
 
-use common::{assert_contains_all, call_pairs, import_set, index_project, node_set};
+use common::{
+    assert_contains_all, call_pairs, import_set, index_project, instantiation_pairs, node_set,
+};
 
 #[test]
 fn java_calls_are_extracted() {
@@ -31,10 +33,11 @@ fn java_calls_are_extracted() {
             "build -> run",
             "build -> deep",
             "build -> gen",
-            "build -> Foo",
-            "build -> ArrayList",
-            "build -> Bar",
         ],
+    );
+    assert_contains_all(
+        &instantiation_pairs(temp.path()),
+        &["build -> Foo", "build -> ArrayList", "build -> Bar"],
     );
 }
 

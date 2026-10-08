@@ -73,8 +73,9 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "scoped_use_list",
                 "use_wildcard",
                 "use_as_clause",
-                // type_refs::rust_trait_impl
+                // type_refs
                 "impl_item",
+                "struct_expression",
             ],
             &["argument", "list", "alias", "path", "name", "trait", "type"],
         ),
@@ -100,12 +101,12 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "extends_clause",
                 "implements_clause",
                 "extends_type_clause",
+                "new_expression",
             ],
-            &["name", "alias", "source", "value", "type"],
+            &["name", "alias", "source", "value", "type", "constructor"],
         ),
-        // python_import_symbols
+        // python_import_symbols, type_refs
         Language::Python => (
-            // type_refs
             &[
                 "import_statement",
                 "aliased_import",
@@ -128,6 +129,12 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "index_expression",
                 "type_instantiation_expression",
                 "parenthesized_expression",
+                // node_kind, type_refs
+                "type_spec",
+                "struct_type",
+                "interface_type",
+                "composite_literal",
+                "generic_type",
             ],
             &["path", "name", "field", "operand", "type", "function"],
         ),
@@ -144,8 +151,9 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "super_interfaces",
                 "extends_interfaces",
                 "type_list",
+                "object_creation_expression",
             ],
-            &["object"],
+            &["object", "type"],
         ),
         // read_declaration_visibility, csharp_using_symbols
         Language::CSharp => (
@@ -158,8 +166,9 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 // type_refs
                 "base_list",
                 "comment",
+                "object_creation_expression",
             ],
-            &["name"],
+            &["name", "type"],
         ),
         // kotlin_callee, call_qualifier, import_module_path, kotlin_node_name
         Language::Kotlin => (
@@ -188,7 +197,7 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             // kotlin_node_name: `type_alias` name, `companion_object` name
             &["type", "name"],
         ),
-        // swift_callee, call_qualifier
+        // swift_callee, call_qualifier, type_refs
         Language::Swift => (
             &[
                 "constructor_expression",
@@ -247,10 +256,11 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "base_class_clause",
                 "access_specifier",
                 "comment",
+                "new_expression",
             ],
-            &["declarator", "name", "function", "field"],
+            &["declarator", "name", "function", "field", "type"],
         ),
-        // php_callee, php_import_symbols
+        // php_callee, php_import_symbols, type_refs
         Language::Php => (
             &[
                 "object_creation_expression",
@@ -266,9 +276,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             // call_qualifier: `object`, `scope`
             &["body", "alias", "object", "scope"],
         ),
-        // ruby_callee, call_qualifier, ruby_require_path
+        // call_qualifier, ruby_require_path, type_refs
         Language::Ruby => (
             &[
+                "call",
                 "constant",
                 "scope_resolution",
                 "string",

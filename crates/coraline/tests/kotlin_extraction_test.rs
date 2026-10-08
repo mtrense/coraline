@@ -101,8 +101,17 @@ fn kotlin_calls_are_extracted() {
             "main -> filter",
             "main -> safe",
             "main -> generic",
-            "make -> Foo",
         ],
+    );
+    // `Foo()` calls the class: an instantiation.
+    assert_contains_all(
+        &query_set(
+            temp.path(),
+            "SELECT s.name || ' -> ' || t.name FROM edges e
+               JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+              WHERE e.kind = 'instantiates'",
+        ),
+        &["make -> Foo"],
     );
 }
 

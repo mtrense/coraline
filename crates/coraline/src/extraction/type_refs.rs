@@ -1,4 +1,5 @@
-//! Types named by declarations: supertypes (`Extends` / `Implements` refs).
+//! Types named in source: supertypes (`Extends` / `Implements` refs) and
+//! explicit constructions (`Instantiates` refs).
 //!
 //! Every node kind and field name used here is listed in the grammar guard's
 //! `helper_names` (`grammar_guard_tests.rs`).
@@ -117,6 +118,50 @@ pub(super) fn supertype_refs<'tree>(
         .into_iter()
         .filter_map(|(node, kind)| type_ref(node, source, kind))
         .collect()
+}
+
+/// Type explicitly constructed by `node`: `new Foo()` (Java, C#, JS / TS,
+/// PHP, C++), `Foo<T>()` (Swift `constructor_expression`), `Foo.new` /
+/// `A::Foo.new` (Ruby), `Foo{…}` / `pkg.Foo{…}` (Go composite literals,
+/// Rust struct expressions). Calls that may construct (`Circle(2.0)` in
+/// Kotlin, Python, Swift) are recorded as calls; the resolver turns them
+/// into instantiations when the callee is a type.
+pub(super) fn instantiation_ref<'tree>(
+    node: &TsNode<'tree>,
+    source: &str,
+    language: Language,
+) -> Option<TypeRef<'tree>> {
+    let type_node = match (language, node.kind()) {
+        (Language::Java | Language::CSharp, "object_creation_expression")
+        | (Language::Cpp, "new_expression") => node.child_by_field_name("type")?,
+        (
+            Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx,
+            "new_expression",
+        ) => node.child_by_field_name("constructor")?,
+        (Language::Php, "object_creation_expression") => node
+            .named_children(&mut node.walk())
+            .find(|c| matches!(c.kind(), "name" | "qualified_name"))?,
+        (Language::Swift, "constructor_expression") => {
+            node.child_by_field_name("constructed_type")?
+        }
+        (Language::Go, "composite_literal") => node.child_by_field_name("type").filter(|t| {
+            matches!(
+                t.kind(),
+                "type_identifier" | "qualified_type" | "generic_type"
+            )
+        })?,
+        (Language::Rust, "struct_expression") => node.child_by_field_name("name")?,
+        (Language::Ruby, "call") => {
+            let method = node.child_by_field_name("method")?;
+            if method.utf8_text(source.as_bytes()).ok()? != "new" {
+                return None;
+            }
+            node.child_by_field_name("receiver")
+                .filter(|r| matches!(r.kind(), "constant" | "scope_resolution"))?
+        }
+        _ => return None,
+    };
+    type_ref(type_node, source, EdgeKind::Instantiates)
 }
 
 /// Rust `impl Trait for Type`: the implementing type's name and an

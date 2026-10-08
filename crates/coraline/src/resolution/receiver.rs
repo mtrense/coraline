@@ -89,6 +89,21 @@ pub fn qualifier_admits<S: AsRef<str>>(
     !containers.is_empty() || language == Language::Kotlin
 }
 
+/// Whether a type written `qualifier.Name` (`app.a.Circle`, `Geo::Ring`,
+/// `Outer.Inner`) may be a same-named type nested in `containers`.
+///
+/// Top-level types and lower-case qualifiers (packages, modules, import
+/// aliases) are admitted, the import / package tiers decide; a type nested
+/// in other types / namespaces needs the qualifier to name one of them.
+pub fn qualifier_admits_type<S: AsRef<str>>(qualifier: &str, containers: &[S]) -> bool {
+    containers.is_empty()
+        || names_container(qualifier, containers)
+        || last_segment(qualifier)
+            .chars()
+            .next()
+            .is_some_and(char::is_lowercase)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,6 +131,16 @@ mod tests {
         assert!(qualifier_admits(Language::TypeScript, "c", &["Circle"]));
         assert!(!qualifier_admits(Language::Python, "c", &NONE));
         assert!(qualifier_admits(Language::Kotlin, "s", &NONE));
+    }
+
+    #[test]
+    fn type_qualifiers_name_packages_or_enclosing_types() {
+        assert!(qualifier_admits_type("app.a", &NONE));
+        assert!(qualifier_admits_type("Mod", &NONE));
+        assert!(qualifier_admits_type("Geo", &["Geo"]));
+        assert!(qualifier_admits_type("App.A", &["App.A"]));
+        assert!(qualifier_admits_type("app.a", &["app.a"]));
+        assert!(!qualifier_admits_type("Other", &["Outer"]));
     }
 
     #[test]

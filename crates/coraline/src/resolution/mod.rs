@@ -101,7 +101,13 @@ fn resolve_page(
             .symbol
             .and_then(|import| import.export_name.as_deref())
             .unwrap_or(&reference.reference_name);
-        let kinds: &[EdgeKind] = &[reference.reference_kind];
+        // A call whose callee is a type (`Circle(2.0)` in Kotlin, Python,
+        // Swift, C++) instantiates it. Callables win over types.
+        let kinds: &[EdgeKind] = if reference.reference_kind == EdgeKind::Calls {
+            &[EdgeKind::Calls, EdgeKind::Instantiates]
+        } else {
+            &[reference.reference_kind]
+        };
         let mut named: Option<Vec<Node>> = None;
         let mut edges = Vec::new();
         for &kind in kinds {
@@ -371,12 +377,14 @@ fn relative_to_root(path: &Path, root: &Path) -> String {
 }
 
 /// Candidates of the node kinds a reference of `kind` can target, without
-/// duplicates.
+/// duplicates. Constructors named like their type (Java, C#, C++) are not
+/// call targets: a call naming them instantiates the type.
 fn filter_by_kind(nodes: Vec<Node>, kind: EdgeKind) -> Vec<Node> {
     let mut seen = HashSet::new();
     let mut filtered = Vec::new();
     for node in nodes {
-        if targets_node_kind(kind, node.kind) && seen.insert(node.id.clone()) {
+        let constructor = kind == EdgeKind::Calls && container_name(&node) == Some(&node.name);
+        if targets_node_kind(kind, node.kind) && !constructor && seen.insert(node.id.clone()) {
             filtered.push(node);
         }
     }
@@ -471,7 +479,11 @@ fn rank_candidates(
             Some(qualifier) if context.qualifier.is_empty() => nodes
                 .into_iter()
                 .filter(|node| {
-                    receiver::qualifier_admits(from_node.language, qualifier, &containers(node))
+                    if names_type(reference_kind) {
+                        receiver::qualifier_admits_type(qualifier, &containers(node))
+                    } else {
+                        receiver::qualifier_admits(from_node.language, qualifier, &containers(node))
+                    }
                 })
                 .collect(),
             _ => nodes,
@@ -532,15 +544,47 @@ fn rank_candidates(
         return Ok(same_dir);
     }
 
-    // Names in scope without naming the callee: wildcard imports, C/C++
-    // includes, C# `using` namespaces, Swift / Ruby imports, and the
-    // caller's own package / Swift module.
-    let mut scope_targets: Vec<Target> = context
+    let scope_targets = scope_targets(conn, packages, from_node, context)?;
+    let (scope_matches, others) = best_matches(conn, packages, others, &scope_targets)?;
+    if !scope_matches.is_empty() {
+        Ok(scope_matches)
+    } else if is_scoped_kind(reference_kind) {
+        // Never fall back to global name matches for calls / type refs:
+        // unrelated projects in one workspace share names like `post` /
+        // `new` / `Config` (#43).
+        Ok(Vec::new())
+    } else {
+        Ok(others)
+    }
+}
+
+/// Where names in scope without an import naming them live: wildcard
+/// imports, C/C++ includes, C# `using` namespaces, Swift / Ruby imports, a
+/// qualifier spelling out a package, and the caller's own package / Swift
+/// module.
+fn scope_targets(
+    conn: &rusqlite::Connection,
+    packages: &mut PackageIndex,
+    from_node: &Node,
+    context: &ImportContext<'_>,
+) -> std::io::Result<Vec<Target>> {
+    let mut targets: Vec<Target> = context
         .scope
         .iter()
         .flat_map(|import| import.scope_targets())
         .collect();
-    scope_targets.extend(
+    // `new app.a.Circle()`, `app.a.helper()`: a qualifier spelling out a
+    // package / namespace needs no import.
+    if let Some(qualifier) = context.qualifier_text
+        && context.qualifier.is_empty()
+    {
+        targets.push(Target::Package {
+            package: normalize_package(qualifier),
+            item: None,
+            score: PACKAGE_SCORE,
+        });
+    }
+    targets.extend(
         packages
             .packages(conn, &from_node.file_path)?
             .iter()
@@ -553,19 +597,9 @@ fn rank_candidates(
     if from_node.language == Language::Swift
         && let Some(module) = packages.swift.module(&from_node.file_path)
     {
-        scope_targets.push(Target::SwiftModule(module.clone()));
+        targets.push(Target::SwiftModule(module.clone()));
     }
-    let (scope_matches, others) = best_matches(conn, packages, others, &scope_targets)?;
-    if !scope_matches.is_empty() {
-        Ok(scope_matches)
-    } else if is_scoped_kind(reference_kind) {
-        // Never fall back to global name matches for calls / type refs:
-        // unrelated projects in one workspace share names like `post` /
-        // `new` / `Config` (#43).
-        Ok(Vec::new())
-    } else {
-        Ok(others)
-    }
+    Ok(targets)
 }
 
 /// Split `nodes` into the best-scoring matches of `targets` and the rest.

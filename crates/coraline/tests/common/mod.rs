@@ -49,6 +49,21 @@ pub fn call_pairs(project_path: &Path) -> BTreeSet<String> {
     )
 }
 
+/// `caller -> type` pairs from both resolved instantiates edges and
+/// unresolved instantiates refs (`new Foo()`, `Foo.new`, `Foo{}`).
+pub fn instantiation_pairs(project_path: &Path) -> BTreeSet<String> {
+    query_set(
+        project_path,
+        "SELECT s.name || ' -> ' || t.name FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'instantiates'
+         UNION
+         SELECT n.name || ' -> ' || u.reference_name FROM unresolved_refs u
+           JOIN nodes n ON n.id = u.from_node_id
+          WHERE u.reference_kind = 'instantiates'",
+    )
+}
+
 /// `source -> target` names of stored edges of `kind` (`extends`, `calls`, …).
 pub fn edges_of_kind(project_path: &Path, kind: &str) -> BTreeSet<String> {
     let conn = db::open_database(project_path).expect("Failed to open database");

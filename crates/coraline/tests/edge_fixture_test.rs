@@ -12,10 +12,8 @@
 //!   `describe` (cross-dir) and constructs a `Circle`.
 //!
 //! Asserted: same-file / same-dir calls, imports, import- / package- /
-//! module-backed cross-dir calls and extends / implements edges.
-//! Instantiation edges (`instantiates`) are recorded per fixture and
-//! asserted by the `#[ignore]`d test at the bottom; remove the `#[ignore]`
-//! once they are extracted.
+//! module-backed cross-dir calls, extends / implements edges and
+//! instantiates edges (`run` constructs a `Circle`).
 #![allow(clippy::expect_used)]
 
 mod common;
@@ -556,6 +554,7 @@ const C_CPP: Fixture = Fixture {
         (
             "b/app.cpp",
             "#include \"../a/report.h\"\n\
+             #include \"../a/circle.h\"\n\
              \n\
              static void run() {\n\
              \x20   describe(2.0);\n\
@@ -624,6 +623,7 @@ const RUBY: Fixture = Fixture {
         (
             "b/app.rb",
             "require_relative '../a/report'\n\
+             require_relative '../a/shapes'\n\
              \n\
              def run\n\
              \x20 describe(2.0)\n\
@@ -843,7 +843,6 @@ fn inheritance_edges_are_stored() {
 }
 
 #[test]
-#[ignore = "PR 3: constructor calls are not turned into Instantiates edges yet (plan §4)"]
 fn instantiates_edges_are_stored() {
     check_all(|fixture, path| {
         missing(

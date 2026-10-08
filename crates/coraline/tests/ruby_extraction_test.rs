@@ -3,7 +3,8 @@
 mod common;
 
 use common::{
-    assert_contains_all, assert_contains_none, call_pairs, import_set, index_project, node_set,
+    assert_contains_all, assert_contains_none, call_pairs, import_set, index_project,
+    instantiation_pairs, node_set,
 };
 
 #[test]
@@ -44,13 +45,15 @@ fn ruby_calls_are_extracted() {
             "build -> helper2",
             "build -> run",
             "build -> deep",
-            "build -> Circle",
-            "build -> Square",
             "build -> map",
             "build -> select",
             "build -> safe",
             "make -> create",
         ],
+    );
+    assert_contains_all(
+        &instantiation_pairs(temp.path()),
+        &["build -> Circle", "build -> Square"],
     );
 }
 

@@ -4,7 +4,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{assert_contains_all, call_pairs, import_set, index_project};
+use common::{assert_contains_all, call_pairs, import_set, index_project, instantiation_pairs};
 
 #[test]
 fn php_calls_are_extracted() {
@@ -32,9 +32,11 @@ fn php_calls_are_extracted() {
             "build -> safe",
             "build -> make",
             "build -> fmt",
-            "build -> Circle",
-            "build -> Square",
         ],
+    );
+    assert_contains_all(
+        &instantiation_pairs(temp.path()),
+        &["build -> Circle", "build -> Square"],
     );
 }
 

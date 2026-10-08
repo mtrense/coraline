@@ -835,11 +835,16 @@ fn walk_tree_collect(
         if is_callable_kind(kind) {
             let key = node_key(kind, start, &name);
             symbol_index.by_key.insert(key, id.clone());
-            symbol_index
-                .by_name
-                .entry(name.clone())
-                .or_default()
-                .push(id.clone());
+            // Constructors named like their type (Java, C#, C++) are not
+            // call targets: `Circle(2.0)` / `new Circle()` instantiate the
+            // type (see `resolution::filter_by_kind`).
+            if stack.last() != Some(&name) {
+                symbol_index
+                    .by_name
+                    .entry(name.clone())
+                    .or_default()
+                    .push(id.clone());
+            }
             symbol_index.callable_ids.insert(id.clone());
             symbol_index.containers.insert(id.clone(), stack.clone());
         } else if is_type_scope_kind(kind) {
@@ -969,8 +974,12 @@ fn walk_tree_calls(
         }
     }
 
-    // Ruby `require` calls are imports.
-    if kind != Some(NodeKind::Import) && is_call_expression(node.kind(), language) {
+    // `new Foo()`, `Foo.new`, `Foo{…}`: left to the resolver like supertypes.
+    // Ruby `require` calls are imports, not calls.
+    if let Some(type_ref) = type_refs::instantiation_ref(&node, source, language) {
+        let source_id = scope_stack.last().map_or(root_id, String::as_str);
+        unresolved_refs.push(type_reference(source_id, type_ref));
+    } else if kind != Some(NodeKind::Import) && is_call_expression(node.kind(), language) {
         let source_id = scope_stack.last().map_or(root_id, String::as_str);
         if let Some(callee_name) = call_name(&node, source, language) {
             let start = node.start_position();
@@ -2269,27 +2278,26 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::Python => &["call"],
         // Go
         Language::Go => &["call_expression"],
-        // Java: method calls and `new Foo()` (recorded as a call to `Foo`)
-        Language::Java => &["method_invocation", "object_creation_expression"],
+        // Java (`new Foo()` is an instantiation; see `type_refs`)
+        Language::Java => &["method_invocation"],
         // C/C++
         Language::C | Language::Cpp => &["call_expression"],
         // C#
         Language::CSharp => &["invocation_expression"],
-        // PHP: `f()`, `$o->m()`, `$o?->m()`, `C::m()` and `new C()` (recorded
-        // as a call to `C`)
+        // PHP: `f()`, `$o->m()`, `$o?->m()`, `C::m()`
         Language::Php => &[
             "function_call_expression",
             "member_call_expression",
             "nullsafe_member_call_expression",
             "scoped_call_expression",
-            "object_creation_expression",
         ],
-        // Ruby: `call` covers `recv.m(...)`, `m(...)` and `Foo.new` (recorded
-        // as a call to `Foo`). Bare `m` without receiver or parentheses is an
+        // Ruby: `call` covers `recv.m(...)`, `m(...)` and `Foo.new` (an
+        // instantiation). Bare `m` without receiver or parentheses is an
         // `identifier`, indistinguishable from a local variable, and is skipped.
         Language::Ruby => &["call"],
-        // Swift: calls and `Foo<T>()` (recorded as a call to `Foo`)
-        Language::Swift => &["call_expression", "constructor_expression"],
+        // Swift (`Foo<T>()` is an instantiation; `Foo()` a call the resolver
+        // may turn into one)
+        Language::Swift => &["call_expression"],
         // Kotlin
         Language::Kotlin => &["call_expression"],
         // Markup, Blazor and unsupported languages: no calls
@@ -2314,8 +2322,8 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         }
         Language::Python => &["function"],
         Language::Go => &["function"],
-        // `method_invocation` → `name`; `object_creation_expression` → `type`
-        Language::Java => &["name", "type"],
+        // `method_invocation` → `name`
+        Language::Java => &["name"],
         Language::C | Language::Cpp => &["function"],
         Language::CSharp => &["function"],
         // `function_call_expression` → `function`; member/scoped calls → `name`
@@ -2344,19 +2352,12 @@ fn kotlin_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
     }
 }
 
-/// Callee of a Swift `call_expression` / `constructor_expression`.
+/// Callee of a Swift `call_expression`.
 ///
 /// `call_expression` has no fields: its first named child is the callee
 /// (`simple_identifier`, or `navigation_expression` whose `suffix` is a
 /// `navigation_suffix` holding the member name), followed by `call_suffix`.
-/// `constructor_expression` (`Foo<T>()`) names the type in `constructed_type`.
 fn swift_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
-    if node.kind() == "constructor_expression" {
-        return node
-            .child_by_field_name("constructed_type")
-            .filter(|t| t.kind() == "user_type")
-            .and_then(|t| child_of_kind(&t, "type_identifier"));
-    }
     let callee = node.named_child(0)?;
     match callee.kind() {
         "simple_identifier" => Some(callee),
@@ -2366,22 +2367,6 @@ fn swift_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
             .filter(|n| n.kind() == "simple_identifier"),
         _ => None,
     }
-}
-
-/// Callee of a Ruby `call`: its `method`, except `Foo.new` / `A::Foo.new`,
-/// which is recorded as a call to the class `Foo`.
-fn ruby_callee<'tree>(node: &TsNode<'tree>, source: &str) -> Option<TsNode<'tree>> {
-    let method = node.child_by_field_name("method")?;
-    if method.utf8_text(source.as_bytes()) == Ok("new") {
-        if let Some(receiver) = node.child_by_field_name("receiver") {
-            match receiver.kind() {
-                "constant" => return Some(receiver),
-                "scope_resolution" => return receiver.child_by_field_name("name"),
-                _ => {}
-            }
-        }
-    }
-    Some(method)
 }
 
 /// Callee of a Go `call_expression`: the `function` expression unwrapped to
@@ -2402,18 +2387,12 @@ fn go_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
     }
 }
 
-/// Callee of a PHP call. Namespaced names (`\App\fmt()`, `new \App\Foo()`)
-/// are reduced to their last segment; `new` has no fields, the class is a
-/// `name` / `qualified_name` child.
+/// Callee of a PHP call. Namespaced names (`\App\fmt()`) are reduced to
+/// their last segment.
 fn php_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
-    let callee = if node.kind() == "object_creation_expression" {
-        node.named_children(&mut node.walk())
-            .find(|c| matches!(c.kind(), "name" | "qualified_name"))?
-    } else {
-        call_name_fields(Language::Php)
-            .iter()
-            .find_map(|field| node.child_by_field_name(field))?
-    };
+    let callee = call_name_fields(Language::Php)
+        .iter()
+        .find_map(|field| node.child_by_field_name(field))?;
     match callee.kind() {
         "name" => Some(callee),
         "qualified_name" => child_of_kind(&callee, "name"),
@@ -2422,10 +2401,9 @@ fn php_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
 }
 
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
-    let mut callee = match language {
+    let callee = match language {
         Language::Kotlin => kotlin_callee(node)?,
         Language::Swift => swift_callee(node)?,
-        Language::Ruby => ruby_callee(node, source)?,
         Language::C | Language::Cpp => c_callee(node)?,
         Language::Php => php_callee(node)?,
         Language::Go => go_callee(node)?,
@@ -2433,10 +2411,6 @@ fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
             .iter()
             .find_map(|field| node.child_by_field_name(field))?,
     };
-    // `new Foo<T>()`: drop the type arguments.
-    if language == Language::Java && callee.kind() == "generic_type" {
-        callee = callee.named_child(0)?;
-    }
 
     let raw = callee.utf8_text(source.as_bytes()).ok()?.to_string();
     let trimmed = raw.trim();
@@ -2715,6 +2689,15 @@ fn node_kind(node: &TsNode, source: &str, language: Language) -> (Option<NodeKin
             if node.kind() == "function_definition" && cpp_is_method(node) =>
         {
             (Some(NodeKind::Method), container)
+        }
+        // `type Circle struct {…}` / `type Shape interface {…}`
+        (Language::Go, (Some(NodeKind::TypeAlias), container)) if node.kind() == "type_spec" => {
+            let kind = match node.child_by_field_name("type").map(|t| t.kind()) {
+                Some("struct_type") => NodeKind::Struct,
+                Some("interface_type") => NodeKind::Interface,
+                _ => NodeKind::TypeAlias,
+            };
+            (Some(kind), container)
         }
         (Language::Ruby, _) if ruby_require_path(node, source).is_some() => {
             (Some(NodeKind::Import), false)
