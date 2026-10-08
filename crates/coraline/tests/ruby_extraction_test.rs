@@ -2,7 +2,9 @@
 
 mod common;
 
-use common::{assert_contains_all, call_pairs, index_project, node_set};
+use common::{
+    assert_contains_all, assert_contains_none, call_pairs, import_set, index_project, node_set,
+};
 
 #[test]
 fn ruby_calls_are_extracted() {
@@ -50,4 +52,37 @@ fn ruby_calls_are_extracted() {
             "make -> create",
         ],
     );
+}
+
+/// `require` / `require_relative` with a literal path are imports (named
+/// after the file, relative paths kept relative), not calls.
+#[test]
+fn ruby_requires_are_imports() {
+    let temp = index_project(&[(
+        "lib/app.rb",
+        "require 'json'\n\
+         require \"app/util\"\n\
+         require_relative 'shapes'\n\
+         require_relative \"../a/report.rb\"\n\
+         require(name)\n\
+         \n\
+         def run\n\
+         \x20 loader.require 'x'\n\
+         end\n",
+    )]);
+
+    let imports = import_set(temp.path());
+    assert_contains_all(
+        &imports,
+        &[
+            "json | json",
+            "util | app/util",
+            "shapes | ./shapes",
+            "report | ../a/report.rb",
+        ],
+    );
+    assert_eq!(imports.len(), 4, "{imports:#?}");
+    let calls = call_pairs(temp.path());
+    assert_contains_none(&calls, &["run -> require_relative"]);
+    assert_contains_all(&calls, &["run -> require"]);
 }

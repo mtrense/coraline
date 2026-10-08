@@ -927,7 +927,8 @@ fn walk_tree_calls(
         }
     }
 
-    if is_call_expression(node.kind(), language) {
+    // Ruby `require` calls are imports.
+    if kind != Some(NodeKind::Import) && is_call_expression(node.kind(), language) {
         if let Some(source_id) = scope_stack.last() {
             if let Some(callee_name) = call_name(&node, source, language) {
                 let start = node.start_position();
@@ -1281,6 +1282,7 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
         Language::Rust => return rust_use_symbols(node, source),
         Language::CSharp => return csharp_using_symbols(node, source).into_iter().collect(),
         Language::Python => return python_import_symbols(node, source),
+        Language::Ruby => return ruby_require_symbols(node, source),
         _ => {}
     }
     let Some(module_path) = import_module_path(node, source, language) else {
@@ -1333,21 +1335,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
             let name = module_path
                 .trim_end_matches(".h")
                 .trim_end_matches(".hpp")
-                .split('/')
-                .next_back()
-                .unwrap_or(&module_path)
-                .to_string();
-            vec![ImportSymbol {
-                local_name: name.clone(),
-                module_path,
-                export_name: Some(name),
-            }]
-        }
-
-        // === Ruby ===
-        Language::Ruby => {
-            let name = module_path
-                .trim_end_matches(".rb")
                 .split('/')
                 .next_back()
                 .unwrap_or(&module_path)
@@ -1583,6 +1570,61 @@ fn csharp_using_symbols(node: &TsNode, source: &str) -> Option<ImportSymbol> {
 /// Imports of a Go `import_declaration`: a single `import_spec` or an
 /// `import_spec_list`. Each spec binds a package (not a symbol) under its
 /// optional `name` (alias, `_` or `.`), else the last path segment.
+/// Path of a Ruby `require 'x'` / `require_relative 'x'` call with a
+/// literal path and no receiver. `require_relative` paths are returned
+/// relative to the file (`./x`, `../a/x`), so the resolver anchors them.
+fn ruby_require_path(node: &TsNode, source: &str) -> Option<String> {
+    if node.kind() != "call" || node.child_by_field_name("receiver").is_some() {
+        return None;
+    }
+    let method = node
+        .child_by_field_name("method")?
+        .utf8_text(source.as_bytes())
+        .ok()?;
+    if !matches!(method, "require" | "require_relative") {
+        return None;
+    }
+    let arguments = node.child_by_field_name("arguments")?;
+    if arguments.named_child_count() != 1 {
+        return None;
+    }
+    let string = arguments
+        .named_child(0)
+        .filter(|arg| arg.kind() == "string")?;
+    // Interpolated strings (`"#{dir}/x"`) have more than one part.
+    if string.named_child_count() != 1 {
+        return None;
+    }
+    let path = string
+        .named_child(0)
+        .filter(|part| part.kind() == "string_content")?
+        .utf8_text(source.as_bytes())
+        .ok()?
+        .trim();
+    if path.is_empty() {
+        None
+    } else if method == "require_relative" && !path.starts_with('.') {
+        Some(format!("./{path}"))
+    } else {
+        Some(path.to_string())
+    }
+}
+
+/// A Ruby require imports a file; it binds no names (everything the file
+/// defines becomes visible), so the import is named after the file.
+fn ruby_require_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
+    let Some(module_path) = ruby_require_path(node, source) else {
+        return Vec::new();
+    };
+    let file = module_path.rsplit('/').next().unwrap_or(&module_path);
+    let local_name = file.strip_suffix(".rb").unwrap_or(file).to_string();
+    vec![ImportSymbol {
+        local_name,
+        module_path,
+        export_name: None,
+    }]
+}
+
 fn go_import_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
     let text = |n: TsNode| n.utf8_text(source.as_bytes()).ok().map(str::to_string);
     let specs: Vec<TsNode> = match child_of_kind(node, "import_spec_list") {
@@ -1679,7 +1721,8 @@ fn import_path_field(language: Language) -> Option<&'static str> {
         Language::CSharp => None,
         // PHP `namespace_use_declaration` has no path field; see `php_import_symbols`.
         Language::Php => None,
-        Language::Ruby => Some("argument"),
+        // Ruby `require` is a `call`; see `ruby_require_path`.
+        Language::Ruby => None,
         // Swift `import_declaration` has no fields; the path is an `identifier` child.
         Language::Swift => None,
         // Kotlin `import` has no fields; the path is a `qualified_identifier` child.
@@ -2605,6 +2648,9 @@ fn node_kind(node: &TsNode, source: &str, language: Language) -> (Option<NodeKin
             if node.kind() == "function_definition" && cpp_is_method(node) =>
         {
             (Some(NodeKind::Method), container)
+        }
+        (Language::Ruby, _) if ruby_require_path(node, source).is_some() => {
+            (Some(NodeKind::Import), false)
         }
         _ => mapped,
     }

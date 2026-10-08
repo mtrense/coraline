@@ -531,10 +531,11 @@ impl FileImport {
 
     /// Imports that bring names into scope without binding the callee:
     /// wildcards (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++
-    /// includes and C# `using` namespaces (not aliases).
+    /// includes, Ruby requires and C# `using` namespaces (not aliases).
     fn is_scope_import(&self) -> bool {
         match self.language {
-            Language::C | Language::Cpp => true,
+            // `#include`, Ruby `require`: everything the file declares.
+            Language::C | Language::Cpp | Language::Ruby => true,
             Language::CSharp => self.export_name.as_deref() == Some(self.local_name.as_str()),
             _ => matches!(self.local_name.as_str(), "*" | "."),
         }

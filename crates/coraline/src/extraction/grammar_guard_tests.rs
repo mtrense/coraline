@@ -217,10 +217,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             // call_qualifier: `object`, `scope`
             &["body", "alias", "object", "scope"],
         ),
-        // ruby_callee, call_qualifier
+        // ruby_callee, call_qualifier, ruby_require_path
         Language::Ruby => (
-            &["constant", "scope_resolution"],
-            &["method", "receiver", "name"],
+            &["constant", "scope_resolution", "string", "string_content"],
+            &["method", "receiver", "name", "arguments"],
         ),
         _ => (&[], &[]),
     }

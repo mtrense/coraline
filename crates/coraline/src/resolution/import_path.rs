@@ -69,7 +69,13 @@ pub fn import_targets(
 fn base_targets(module_path: &str, language: Language, from_file: &str) -> Vec<ImportTarget> {
     let from_dir = parent_segments(from_file);
     match language {
-        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
+        // Ruby: `require_relative` paths are extracted as `./x`; `require
+        // 'app/util'` is relative to a load path (`lib/`).
+        Language::JavaScript
+        | Language::Jsx
+        | Language::TypeScript
+        | Language::Tsx
+        | Language::Ruby => {
             if module_path.starts_with('.') {
                 vec![anchored(join(&from_dir, &slash_segments(module_path)))]
             } else {
@@ -373,6 +379,14 @@ mod tests {
         assert_eq!(
             targets("<stdio.h>", Language::C, "a/report.c"),
             vec![("stdio".to_string(), false)]
+        );
+        assert_eq!(
+            targets("../a/report.rb", Language::Ruby, "b/app.rb"),
+            vec![("a/report".to_string(), true)]
+        );
+        assert_eq!(
+            targets("app/util", Language::Ruby, "b/app.rb"),
+            vec![("app/util".to_string(), false)]
         );
     }
 

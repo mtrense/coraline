@@ -640,8 +640,7 @@ const RUBY: Fixture = Fixture {
         "describe -> square",
         "main -> run",
     ],
-    // Ruby has no import mapping: `require` is recorded as a call.
-    imports: &[],
+    imports: &["report.rb -> shapes", "app.rb -> report"],
     cross_dir_calls: &["run -> describe"],
     inherits: &["Circle -> Shape"],
     instantiates: &["run -> Circle"],

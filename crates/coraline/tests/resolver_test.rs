@@ -1131,3 +1131,34 @@ fn ambiguous_calls_link_every_candidate_with_lower_confidence() {
     // Ambiguity never widens the search: no import, no same dir → no edge.
     assert!(targets_of(&calls, "summary").is_empty(), "{calls:#?}");
 }
+
+/// `require_relative` / `require` make another file's methods callable;
+/// without a require, same-named methods in other dirs stay unlinked.
+#[test]
+fn ruby_requires_resolve_cross_dir_calls() {
+    let files = [
+        ("a/report.rb", "def describe(x)\n  x\nend\n"),
+        ("lib/app/util.rb", "def helper\nend\n"),
+        (
+            "b/app.rb",
+            "require_relative '../a/report'\nrequire 'app/util'\n\n\
+             def run\n  describe(1)\n  helper()\nend\n",
+        ),
+        ("c/report.rb", "def describe(x)\n  x\nend\n"),
+        ("c/util.rb", "def helper\nend\n"),
+        ("d/main.rb", "def start\n  describe(2)\n  helper()\nend\n"),
+    ];
+    assert_calls(
+        &files,
+        &[
+            "run -> describe @ a/report.rb",
+            "run -> helper @ lib/app/util.rb",
+        ],
+    );
+    let temp = index_project(&files);
+    let calls = call_edges(temp.path());
+    assert!(
+        !calls.iter().any(|call| call.starts_with("start -> ")),
+        "{calls:#?}"
+    );
+}
