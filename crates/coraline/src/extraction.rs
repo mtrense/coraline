@@ -1002,6 +1002,14 @@ fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
             .map(|s| s.to_string());
     }
 
+    if matches!(
+        language,
+        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx
+    ) && matches!(node.kind(), "arrow_function" | "function_expression")
+    {
+        return js_function_value_name(node, source);
+    }
+
     // Swift `deinit` has no name field.
     if language == Language::Swift && node.kind() == "deinit_declaration" {
         return Some("deinit".to_string());
@@ -1015,6 +1023,24 @@ fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
 
     name_node
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .map(|s| s.to_string())
+}
+
+/// Name of a JS/TS function value: its own name (`function g() {}`), else
+/// the variable it initialises (`const f = () => …`). Other anonymous
+/// functions (callbacks, IIFEs) have no name, so calls inside them stay
+/// attributed to the enclosing function.
+fn js_function_value_name(node: &TsNode, source: &str) -> Option<String> {
+    let name_node = node.child_by_field_name("name").or_else(|| {
+        node.parent()
+            .filter(|p| p.kind() == "variable_declarator")
+            .filter(|p| p.child_by_field_name("value") == Some(*node))
+            .and_then(|p| p.child_by_field_name("name"))
+            .filter(|n| n.kind() == "identifier")
+    })?;
+    name_node
+        .utf8_text(source.as_bytes())
+        .ok()
         .map(|s| s.to_string())
 }
 
@@ -2126,7 +2152,7 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         // `call_expression` → `function`; `macro_invocation` → `macro`
         Language::Rust => &["function", "macro"],
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
-            &["function", "callee"]
+            &["function"]
         }
         Language::Python => &["function"],
         Language::Go => &["function"],
@@ -2295,14 +2321,15 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
         // === JavaScript/TypeScript family ===
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => &[
             ("function_declaration", NodeKind::Function, false),
+            // Named after their variable; see `js_function_value_name`.
             ("arrow_function", NodeKind::Function, false),
+            ("function_expression", NodeKind::Function, false),
             ("class_declaration", NodeKind::Class, true),
             ("method_definition", NodeKind::Method, false),
             ("interface_declaration", NodeKind::Interface, true),
             ("type_alias_declaration", NodeKind::TypeAlias, false),
             ("import_statement", NodeKind::Import, false),
             ("export_statement", NodeKind::Export, false),
-            ("export_declaration", NodeKind::Export, false),
             ("enum_declaration", NodeKind::Enum, true),
             ("variable_declarator", NodeKind::Variable, false),
         ],

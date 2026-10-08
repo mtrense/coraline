@@ -96,8 +96,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "type_alias_declaration",
                 "enum_declaration",
                 "variable_declarator",
+                // js_function_value_name
+                "identifier",
             ],
-            &["name", "alias", "source"],
+            &["name", "alias", "source", "value"],
         ),
         // python_import_symbols
         Language::Python => (
@@ -239,13 +241,8 @@ fn grammar_group(language: Language) -> Vec<Language> {
 /// Temporary allowlist of names known not to exist in the grammar.
 /// Entries are `"kind:<name>"` or `"field:<name>"`. Remove entries as the
 /// corresponding mappings get fixed (see plan §2/§3).
-fn known_bad(language: Language) -> &'static [&'static str] {
-    match language {
-        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
-            &["field:callee", "kind:export_declaration"]
-        }
-        _ => &[],
-    }
+const fn known_bad(_language: Language) -> &'static [&'static str] {
+    &[]
 }
 
 fn bad_names(language: Language) -> BTreeSet<String> {
