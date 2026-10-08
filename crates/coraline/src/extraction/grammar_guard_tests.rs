@@ -92,13 +92,26 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "variable_declarator",
                 // js_function_value_name
                 "identifier",
+                // type_refs
+                "abstract_class_declaration",
+                "class_heritage",
+                "extends_clause",
+                "implements_clause",
+                "extends_type_clause",
             ],
-            &["name", "alias", "source", "value"],
+            &["name", "alias", "source", "value", "type"],
         ),
         // python_import_symbols
         Language::Python => (
-            &["import_statement", "aliased_import", "wildcard_import"],
-            &["name", "alias", "module_name"],
+            // type_refs
+            &[
+                "import_statement",
+                "aliased_import",
+                "wildcard_import",
+                "identifier",
+                "attribute",
+            ],
+            &["name", "alias", "module_name", "superclasses"],
         ),
         // go_import_symbols, go_callee, call_qualifier
         Language::Go => (
@@ -119,7 +132,17 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
         // read_declaration_visibility, call_qualifier, import_symbols,
         // module_name
         Language::Java => (
-            &["modifiers", "asterisk", "scoped_identifier", "identifier"],
+            &[
+                "modifiers",
+                "asterisk",
+                "scoped_identifier",
+                "identifier",
+                // type_refs
+                "superclass",
+                "super_interfaces",
+                "extends_interfaces",
+                "type_list",
+            ],
             &["object"],
         ),
         // read_declaration_visibility, csharp_using_symbols
@@ -130,6 +153,9 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "qualified_name",
                 "generic_name",
                 "alias_qualified_name",
+                // type_refs
+                "base_list",
+                "comment",
             ],
             &["name"],
         ),
@@ -151,6 +177,11 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "type_alias",
                 "package_header",
                 "visibility_modifier",
+                // type_refs
+                "delegation_specifiers",
+                "user_type",
+                "constructor_invocation",
+                "explicit_delegation",
             ],
             // kotlin_node_name: `type_alias` name, `companion_object` name
             &["type", "name"],
@@ -166,9 +197,17 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 // swift_class_kind
                 "class_declaration",
                 "deinit_declaration",
+                // type_refs
+                "inheritance_specifier",
             ],
-            // call_qualifier: `target`
-            &["constructed_type", "suffix", "declaration_kind", "target"],
+            // call_qualifier: `target`; type_refs: `inherits_from`
+            &[
+                "constructed_type",
+                "suffix",
+                "declaration_kind",
+                "target",
+                "inherits_from",
+            ],
         ),
         // c_function_name, c_callee
         Language::C => (
@@ -202,6 +241,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "attribute_declaration",
                 "field_declaration_list",
                 "field_expression",
+                // type_refs
+                "base_class_clause",
+                "access_specifier",
+                "comment",
             ],
             &["declarator", "name", "function", "field"],
         ),
@@ -213,13 +256,25 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "qualified_name",
                 "namespace_name",
                 "namespace_use_clause",
+                // type_refs
+                "base_clause",
+                "class_interface_clause",
+                "comment",
             ],
             // call_qualifier: `object`, `scope`
             &["body", "alias", "object", "scope"],
         ),
         // ruby_callee, call_qualifier, ruby_require_path
         Language::Ruby => (
-            &["constant", "scope_resolution", "string", "string_content"],
+            &[
+                "constant",
+                "scope_resolution",
+                "string",
+                "string_content",
+                // type_refs
+                "superclass",
+                "comment",
+            ],
             &["method", "receiver", "name", "arguments"],
         ),
         _ => (&[], &[]),

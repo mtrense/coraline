@@ -101,40 +101,51 @@ fn resolve_page(
             .symbol
             .and_then(|import| import.export_name.as_deref())
             .unwrap_or(&reference.reference_name);
-        let candidates = match reference.reference_kind {
-            EdgeKind::Calls => {
-                // Prefer extractor-provided candidate IDs for better locality/precision.
-                let from_ids = reference
-                    .candidates
-                    .as_ref()
-                    .map_or_else(Vec::new, |ids| nodes_from_ids(conn, ids));
-                if from_ids.is_empty() {
-                    filter_by_call_kind(db::find_nodes_by_name(conn, lookup_name)?)
-                } else {
-                    filter_by_call_kind(from_ids)
+        let kinds: &[EdgeKind] = &[reference.reference_kind];
+        let mut named: Option<Vec<Node>> = None;
+        let mut edges = Vec::new();
+        for &kind in kinds {
+            // Prefer extractor-provided candidate IDs for better locality/precision.
+            let from_ids = match (&reference.candidates, kind) {
+                (Some(ids), EdgeKind::Calls) => nodes_from_ids(conn, ids),
+                _ => Vec::new(),
+            };
+            let candidates = if from_ids.is_empty() {
+                if named.is_none() {
+                    named = Some(db::find_nodes_by_name(conn, lookup_name)?);
                 }
+                named.clone().unwrap_or_default()
+            } else {
+                from_ids
+            };
+            let mut candidates = filter_by_kind(candidates, kind);
+            if is_inheritance(kind) {
+                candidates.retain(|node| node.id != reference.from_node_id);
             }
-            _ => db::find_nodes_by_name(conn, &reference.reference_name)?,
-        };
-
-        let candidates = rank_candidates(
-            conn,
-            packages,
-            candidates,
-            from_node.as_ref(),
-            &context,
-            &reference.reference_name,
-            reference.reference_kind,
-        )?;
-
-        let mut edges = reference_edges(reference, candidates, from_node.as_ref());
+            if candidates.is_empty() {
+                continue;
+            }
+            let candidates = rank_candidates(
+                conn,
+                packages,
+                candidates,
+                from_node.as_ref(),
+                &context,
+                &reference.reference_name,
+                kind,
+            )?;
+            edges = reference_edges(reference, kind, candidates, from_node.as_ref());
+            if !edges.is_empty() {
+                break;
+            }
+        }
         // If generic resolution found nothing, try framework-specific hints.
         if edges.is_empty()
             && let Some(from) = &from_node
         {
             let fallback = framework_fallback(conn, project_root, from, &reference.reference_name);
             if fallback.len() == 1 {
-                edges = reference_edges(reference, fallback, None);
+                edges = reference_edges(reference, reference.reference_kind, fallback, None);
             }
         }
         if !edges.is_empty() {
@@ -174,33 +185,41 @@ fn confidence_for_reference(name: &str) -> f32 {
     }
 }
 
-/// Edges for `reference` to its ranked `candidates`: exactly one target, or
-/// for calls the targets picked by [`call_targets`].
+/// Edges of `kind` for `reference` to its ranked `candidates`: exactly one
+/// target, or for calls the targets picked by [`call_targets`].
 fn reference_edges(
     reference: &UnresolvedReference,
+    kind: EdgeKind,
     candidates: Vec<Node>,
     from_node: Option<&Node>,
 ) -> Vec<Edge> {
     let confidence = confidence_for_reference(&reference.reference_name);
-    let (targets, confidence) = if reference.reference_kind == EdgeKind::Calls {
+    let (targets, confidence) = if kind == EdgeKind::Calls {
         call_targets(
             candidates,
             from_node,
             reference.qualifier.as_deref(),
             confidence,
         )
-    } else if candidates.len() == 1 {
-        (candidates, confidence)
     } else {
-        (Vec::new(), confidence)
+        let candidates = if names_type(kind) {
+            first_per_file(candidates)
+        } else {
+            candidates
+        };
+        if candidates.len() == 1 {
+            (candidates, confidence)
+        } else {
+            (Vec::new(), confidence)
+        }
     };
     targets
         .into_iter()
         .map(|target| Edge {
             source: reference.from_node_id.clone(),
             metadata: requeue_metadata(reference, &target.name),
+            kind: inheritance_kind(kind, from_node, &target),
             target: target.id,
-            kind: reference.reference_kind,
             line: Some(reference.line),
             column: Some(reference.column),
             confidence,
@@ -351,17 +370,86 @@ fn relative_to_root(path: &Path, root: &Path) -> String {
         .into_owned()
 }
 
-fn filter_by_call_kind(nodes: Vec<Node>) -> Vec<Node> {
+/// Candidates of the node kinds a reference of `kind` can target, without
+/// duplicates.
+fn filter_by_kind(nodes: Vec<Node>, kind: EdgeKind) -> Vec<Node> {
     let mut seen = HashSet::new();
     let mut filtered = Vec::new();
     for node in nodes {
-        if matches!(node.kind, NodeKind::Function | NodeKind::Method)
-            && seen.insert(node.id.clone())
-        {
+        if targets_node_kind(kind, node.kind) && seen.insert(node.id.clone()) {
             filtered.push(node);
         }
     }
     filtered
+}
+
+const fn targets_node_kind(kind: EdgeKind, node_kind: NodeKind) -> bool {
+    match kind {
+        EdgeKind::Calls => matches!(node_kind, NodeKind::Function | NodeKind::Method),
+        EdgeKind::Instantiates => matches!(node_kind, NodeKind::Class | NodeKind::Struct),
+        EdgeKind::Extends | EdgeKind::Implements => {
+            matches!(
+                node_kind,
+                NodeKind::Class | NodeKind::Struct | NodeKind::Interface
+            ) || is_interface_like(node_kind)
+        }
+        _ => true,
+    }
+}
+
+const fn is_inheritance(kind: EdgeKind) -> bool {
+    matches!(kind, EdgeKind::Extends | EdgeKind::Implements)
+}
+
+/// References naming a type rather than a callable.
+const fn names_type(kind: EdgeKind) -> bool {
+    matches!(
+        kind,
+        EdgeKind::Extends | EdgeKind::Implements | EdgeKind::Instantiates
+    )
+}
+
+/// Reference kinds resolved only through same file / same dir / imports /
+/// packages / modules, never by a project-wide name match (#43).
+const fn is_scoped_kind(kind: EdgeKind) -> bool {
+    matches!(kind, EdgeKind::Calls) || names_type(kind)
+}
+
+const fn is_interface_like(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Interface | NodeKind::Protocol | NodeKind::Trait
+    )
+}
+
+/// Edge kind for a resolved reference of `kind`. Where the syntax doesn't
+/// distinguish (Kotlin `: I`, C# `: I`, Swift `: P`), supertypes are
+/// recorded as `Extends`; a class / struct / object naming an interface,
+/// protocol or trait implements it.
+fn inheritance_kind(kind: EdgeKind, from: Option<&Node>, target: &Node) -> EdgeKind {
+    let from_interface = from.is_some_and(|from| is_interface_like(from.kind));
+    if kind == EdgeKind::Extends && is_interface_like(target.kind) && !from_interface {
+        EdgeKind::Implements
+    } else {
+        kind
+    }
+}
+
+/// One candidate per file: a type can have several same-named nodes in one
+/// file (Swift `extension Circle` next to `class Circle`); the first one
+/// is the declaration.
+fn first_per_file(mut nodes: Vec<Node>) -> Vec<Node> {
+    nodes.sort_by(|a, b| {
+        (&a.file_path, a.start_line, a.start_column).cmp(&(
+            &b.file_path,
+            b.start_line,
+            b.start_column,
+        ))
+    });
+    nodes.dedup_by(|later, first| {
+        later.file_path == first.file_path && later.qualified_name == first.qualified_name
+    });
+    nodes
 }
 
 fn rank_candidates(
@@ -470,9 +558,10 @@ fn rank_candidates(
     let (scope_matches, others) = best_matches(conn, packages, others, &scope_targets)?;
     if !scope_matches.is_empty() {
         Ok(scope_matches)
-    } else if reference_kind == EdgeKind::Calls {
-        // Never fall back to global name matches for calls: unrelated
-        // projects in one workspace share names like `post` / `new` (#43).
+    } else if is_scoped_kind(reference_kind) {
+        // Never fall back to global name matches for calls / type refs:
+        // unrelated projects in one workspace share names like `post` /
+        // `new` / `Config` (#43).
         Ok(Vec::new())
     } else {
         Ok(others)
@@ -510,8 +599,8 @@ fn best_matches(
 /// Declarations exported as `export_name` from `module_path` (an Export
 /// node's signature, e.g. Kotlin `app.a.describe`). Export nodes are
 /// followed to the declaration of the same name in their file, so edges
-/// point at the function / class itself; for calls only functions and
-/// methods count.
+/// point at the function / class itself. Only kinds the reference can
+/// target count (functions / methods for calls, types for type refs).
 fn export_candidates(
     conn: &rusqlite::Connection,
     module_path: &str,
@@ -535,9 +624,7 @@ fn export_candidates(
                 }),
         );
     }
-    if reference_kind == EdgeKind::Calls {
-        declarations = filter_by_call_kind(declarations);
-    }
+    declarations = filter_by_kind(declarations, reference_kind);
 
     Ok((!declarations.is_empty()).then_some(declarations))
 }

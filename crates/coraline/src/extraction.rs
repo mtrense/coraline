@@ -41,6 +41,7 @@ const RESOLVE_BATCH_SIZE: usize = 10_000;
 
 #[cfg(test)]
 mod grammar_guard_tests;
+mod type_refs;
 
 #[derive(Debug, Clone, Copy)]
 pub enum IndexPhase {
@@ -637,6 +638,8 @@ struct SymbolIndex {
     callable_ids: HashSet<String>,
     /// Enclosing type / namespace names per callable id, outermost first.
     containers: HashMap<String, Vec<String>>,
+    /// Type ids (classes, structs, interfaces, ...) by name.
+    types_by_name: HashMap<String, Vec<String>>,
 }
 
 /// Read visibility from a declaration tree-sitter node.
@@ -842,6 +845,11 @@ fn walk_tree_collect(
         } else if is_type_scope_kind(kind) {
             let key = node_key(kind, start, &name);
             symbol_index.by_key.insert(key, id.clone());
+            symbol_index
+                .types_by_name
+                .entry(name.clone())
+                .or_default()
+                .push(id.clone());
         }
 
         if let Some(parent_id) = parent_id.clone() {
@@ -940,6 +948,11 @@ fn walk_tree_calls(
     };
     let pushed = scope_id.is_some();
     if let Some(id) = scope_id {
+        if kind.is_some_and(is_type_scope_kind) {
+            for type_ref in type_refs::supertype_refs(&node, source, language) {
+                unresolved_refs.push(type_reference(&id, type_ref));
+            }
+        }
         scope_stack.push(id);
     }
 
@@ -1003,6 +1016,22 @@ fn walk_tree_calls(
 
     if pushed {
         scope_stack.pop();
+    }
+}
+
+/// Unresolved ref from `from_id` to a type named in source. Left to the
+/// resolver even when the type is declared in this file: it applies the
+/// same-file / import / package rules and picks the edge kind by target.
+fn type_reference(from_id: &str, type_ref: type_refs::TypeRef) -> UnresolvedReference {
+    let start = type_ref.node.start_position();
+    UnresolvedReference {
+        from_node_id: from_id.to_string(),
+        reference_name: type_ref.name,
+        reference_kind: type_ref.kind,
+        line: start.row as i64 + 1,
+        column: start.column as i64,
+        candidates: None,
+        qualifier: type_ref.qualifier,
     }
 }
 
@@ -2162,6 +2191,7 @@ fn collect_export_names(node: TsNode, source: &str, names: &mut Vec<String>) {
         node.kind(),
         "function_declaration"
             | "class_declaration"
+            | "abstract_class_declaration"
             | "interface_declaration"
             | "type_alias_declaration"
             | "enum_declaration"
@@ -2489,6 +2519,8 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("arrow_function", NodeKind::Function, false),
             ("function_expression", NodeKind::Function, false),
             ("class_declaration", NodeKind::Class, true),
+            // TypeScript `abstract class`
+            ("abstract_class_declaration", NodeKind::Class, true),
             ("method_definition", NodeKind::Method, false),
             ("interface_declaration", NodeKind::Interface, true),
             ("type_alias_declaration", NodeKind::TypeAlias, false),

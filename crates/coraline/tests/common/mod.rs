@@ -49,6 +49,22 @@ pub fn call_pairs(project_path: &Path) -> BTreeSet<String> {
     )
 }
 
+/// `source -> target` names of stored edges of `kind` (`extends`, `calls`, …).
+pub fn edges_of_kind(project_path: &Path, kind: &str) -> BTreeSet<String> {
+    let conn = db::open_database(project_path).expect("Failed to open database");
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.name || ' -> ' || t.name FROM edges e
+               JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+              WHERE e.kind = ?1",
+        )
+        .expect("Failed to prepare SQL statement");
+    stmt.query_map([kind], |row| row.get::<_, String>(0))
+        .expect("Failed to query")
+        .filter_map(Result::ok)
+        .collect()
+}
+
 /// `kind:name` for every node except files.
 pub fn node_set(project_path: &Path) -> BTreeSet<String> {
     query_set(
