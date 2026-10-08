@@ -71,10 +71,16 @@ const ALL_LANGUAGES: &[Language] = &[
 /// tables. Keep in sync with the string literals in `extraction.rs`.
 fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'static str]) {
     match language {
+        // read_declaration_visibility, rust_use_symbols, module_name
         Language::Rust => (
-            &["visibility_modifier"],
-            // read_declaration_visibility, rust_use_alias, rust_use_path, module_name
-            &["visibility_modifier", "alias", "path", "name"],
+            &[
+                "visibility_modifier",
+                "use_list",
+                "scoped_use_list",
+                "use_wildcard",
+                "use_as_clause",
+            ],
+            &["argument", "list", "alias", "path", "name"],
         ),
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => (
             &[
@@ -222,7 +228,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             &["field:callee", "kind:export_declaration"]
         }
-        Language::Rust => &["field:visibility_modifier", "kind:use_item"],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         _ => &[],
     }

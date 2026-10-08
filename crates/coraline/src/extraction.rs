@@ -660,17 +660,8 @@ fn read_declaration_visibility(
 ) -> Option<(Visibility, bool)> {
     match language {
         Language::Rust => {
-            // tree-sitter-rust's grammar names the visibility child
-            // `visibility_modifier`, but the field name has shifted
-            // between minor versions; fall back to scanning the direct
-            // children by node kind to stay robust.
-            let vis = node
-                .child_by_field_name("visibility_modifier")
-                .or_else(|| {
-                    let mut cursor = node.walk();
-                    node.children(&mut cursor)
-                        .find(|c| c.kind() == "visibility_modifier")
-                })?;
+            // `visibility_modifier` is a child, not a field.
+            let vis = child_of_kind(&node, "visibility_modifier")?;
             let text = vis.utf8_text(source.as_bytes()).ok()?.trim();
             if text == "pub" {
                 Some((Visibility::Public, true))
@@ -724,8 +715,24 @@ fn walk_tree_collect(
     if let Some(NodeKind::Import) = kind {
         if let Some(parent_id) = parent_id.clone() {
             add_import_nodes(
-                &node, source, language, file_path, parent_id, nodes, edges, now_ms,
+                &node,
+                source,
+                language,
+                file_path,
+                parent_id.clone(),
+                nodes,
+                edges,
+                now_ms,
             );
+            // `pub use a::B;` also re-exports `B`.
+            if language == Language::Rust
+                && read_declaration_visibility(node, language, source)
+                    .is_some_and(|(_, exported)| exported)
+            {
+                add_export_nodes(
+                    &node, source, language, file_path, parent_id, nodes, edges, now_ms,
+                );
+            }
             return;
         }
     }
@@ -1203,6 +1210,7 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
     match language {
         Language::Php => return php_import_symbols(node, source),
         Language::Go => return go_import_symbols(node, source),
+        Language::Rust => return rust_use_symbols(node, source),
         _ => {}
     }
     let Some(module_path) = import_module_path(node, source, language) else {
@@ -1228,22 +1236,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
                 });
             }
             imports
-        }
-
-        // === Rust ===
-        Language::Rust => {
-            let original_name = module_path
-                .rsplit("::")
-                .next()
-                .unwrap_or(&module_path)
-                .to_string();
-            let alias = rust_use_alias(node, source);
-
-            vec![ImportSymbol {
-                local_name: alias.clone().unwrap_or_else(|| original_name.clone()),
-                module_path,
-                export_name: alias.map(|_| original_name),
-            }]
         }
 
         // === Python: from X import Y, Z ===
@@ -1375,6 +1367,92 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
     }
 }
 
+/// Imports of a Rust `use_declaration`, one per bound name: `use a::B;`,
+/// `use a::B as C;`, `use a::{B, c::{D, self}};`, `use a::*;`. The module
+/// path is the full path of the item (`a::c::D`); aliased imports record the
+/// original name as `export_name`.
+fn rust_use_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
+    let mut imports = Vec::new();
+    if let Some(argument) = node.child_by_field_name("argument") {
+        collect_rust_use(argument, source, "", &mut imports);
+    }
+    imports
+}
+
+fn collect_rust_use(node: TsNode, source: &str, prefix: &str, imports: &mut Vec<ImportSymbol>) {
+    let text = |n: TsNode| {
+        n.utf8_text(source.as_bytes())
+            .ok()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    // `prefix::path`, with `a::{self}` meaning `a`.
+    let join = |path: Option<String>| {
+        let full = match path {
+            Some(path) if prefix.is_empty() => path,
+            Some(path) => format!("{prefix}::{path}"),
+            None => prefix.to_string(),
+        };
+        full.strip_suffix("::self")
+            .map(str::to_string)
+            .unwrap_or(full)
+    };
+    let last_segment = |path: &str| path.rsplit("::").next().unwrap_or(path).to_string();
+
+    match node.kind() {
+        "use_list" => {
+            for child in node.named_children(&mut node.walk()) {
+                collect_rust_use(child, source, prefix, imports);
+            }
+        }
+        "scoped_use_list" => {
+            let prefix = join(node.child_by_field_name("path").and_then(text));
+            if let Some(list) = node.child_by_field_name("list") {
+                collect_rust_use(list, source, &prefix, imports);
+            }
+        }
+        "use_wildcard" => {
+            let base = join(node.named_child(0).and_then(text));
+            imports.push(ImportSymbol {
+                local_name: "*".to_string(),
+                module_path: if base.is_empty() {
+                    "*".to_string()
+                } else {
+                    format!("{base}::*")
+                },
+                export_name: None,
+            });
+        }
+        "use_as_clause" => {
+            let module_path = join(node.child_by_field_name("path").and_then(text));
+            let Some(alias) = node.child_by_field_name("alias").and_then(text) else {
+                return;
+            };
+            if module_path.is_empty() {
+                return;
+            }
+            imports.push(ImportSymbol {
+                local_name: alias,
+                export_name: Some(last_segment(&module_path)),
+                module_path,
+            });
+        }
+        // `identifier`, `scoped_identifier`, `crate`, `self`, `super`, …
+        _ => {
+            let module_path = join(text(node));
+            if module_path.is_empty() {
+                return;
+            }
+            imports.push(ImportSymbol {
+                local_name: last_segment(&module_path),
+                module_path,
+                export_name: None,
+            });
+        }
+    }
+}
+
 /// Imports of a Go `import_declaration`: a single `import_spec` or an
 /// `import_spec_list`. Each spec binds a package (not a symbol) under its
 /// optional `name` (alias, `_` or `.`), else the last path segment.
@@ -1459,7 +1537,8 @@ fn php_import_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
 /// (`grammar_guard_tests`) enforces this.
 fn import_path_field(language: Language) -> Option<&'static str> {
     match language {
-        Language::Rust => Some("path"),
+        // Rust `use_declaration` → `argument`; see `rust_use_symbols`.
+        Language::Rust => None,
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             Some("source")
         }
@@ -1780,16 +1859,15 @@ fn export_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Export
         }
 
         // === Rust ===
-        Language::Rust => {
-            let Some(path) = rust_use_path(node, source) else {
-                return Vec::new();
-            };
-            let name = path.rsplit("::").next().unwrap_or(&path).to_string();
-            vec![ExportSymbol {
-                name,
-                module_path: Some(path),
-            }]
-        }
+        // `pub use` re-exports (wildcards have no single name)
+        Language::Rust => rust_use_symbols(node, source)
+            .into_iter()
+            .filter(|import| import.local_name != "*")
+            .map(|import| ExportSymbol {
+                name: import.local_name,
+                module_path: Some(import.module_path),
+            })
+            .collect(),
 
         // === Python: explicit __all__ or all public names ===
         Language::Python => {
@@ -1865,18 +1943,6 @@ fn kotlin_export_symbol(node: &TsNode, source: &str) -> Option<ExportSymbol> {
         name,
         module_path: Some(module_path),
     })
-}
-
-fn rust_use_path(node: &TsNode, source: &str) -> Option<String> {
-    let child = node.child_by_field_name("path")?;
-    let raw = child.utf8_text(source.as_bytes()).ok()?.trim().to_string();
-    if raw.is_empty() { None } else { Some(raw) }
-}
-
-fn rust_use_alias(node: &TsNode, source: &str) -> Option<String> {
-    node.child_by_field_name("alias")
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .map(|s| s.to_string())
 }
 
 fn export_module_path(node: &TsNode, source: &str) -> Option<String> {
@@ -2000,7 +2066,8 @@ fn is_call_expression(kind: &str, language: Language) -> bool {
 /// guard test (`grammar_guard_tests`) enforces this.
 fn call_name_fields(language: Language) -> &'static [&'static str] {
     match language {
-        Language::Rust => &["function"],
+        // `call_expression` → `function`; `macro_invocation` → `macro`
+        Language::Rust => &["function", "macro"],
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             &["function", "callee"]
         }
@@ -2164,8 +2231,8 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("enum_item", NodeKind::Enum, true),
             ("trait_item", NodeKind::Trait, true),
             ("use_declaration", NodeKind::Import, false),
+            // `pub use` is also emitted as an export; see `walk_tree_collect`.
             ("mod_item", NodeKind::Module, true),
-            ("use_item", NodeKind::Export, false),
         ],
 
         // === JavaScript/TypeScript family ===
