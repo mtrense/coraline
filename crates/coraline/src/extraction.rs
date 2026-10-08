@@ -1852,8 +1852,8 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::Php => &["function_call_expression", "member_call_expression"],
         // Ruby
         Language::Ruby => &["method_call"],
-        // Swift
-        Language::Swift => &["function_call_expression"],
+        // Swift: calls and `Foo<T>()` (recorded as a call to `Foo`)
+        Language::Swift => &["call_expression", "constructor_expression"],
         // Kotlin
         Language::Kotlin => &["call_expression"],
         // Markup, Blazor and unsupported languages: no calls
@@ -1883,8 +1883,8 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         Language::CSharp => &["function"],
         Language::Php => &["function"],
         Language::Ruby => &["method"],
-        Language::Swift => &["function"],
-        // Kotlin `call_expression` has no fields; see `kotlin_callee`.
+        // Kotlin and Swift `call_expression` have no fields; see
+        // `kotlin_callee` / `swift_callee`.
         _ => &[],
     }
 }
@@ -1906,13 +1906,37 @@ fn kotlin_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
     }
 }
 
+/// Callee of a Swift `call_expression` / `constructor_expression`.
+///
+/// `call_expression` has no fields: its first named child is the callee
+/// (`simple_identifier`, or `navigation_expression` whose `suffix` is a
+/// `navigation_suffix` holding the member name), followed by `call_suffix`.
+/// `constructor_expression` (`Foo<T>()`) names the type in `constructed_type`.
+fn swift_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    if node.kind() == "constructor_expression" {
+        return node
+            .child_by_field_name("constructed_type")
+            .filter(|t| t.kind() == "user_type")
+            .and_then(|t| child_of_kind(&t, "type_identifier"));
+    }
+    let callee = node.named_child(0)?;
+    match callee.kind() {
+        "simple_identifier" => Some(callee),
+        "navigation_expression" => callee
+            .child_by_field_name("suffix")
+            .and_then(|suffix| suffix.child_by_field_name("suffix"))
+            .filter(|n| n.kind() == "simple_identifier"),
+        _ => None,
+    }
+}
+
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
-    let mut callee = if language == Language::Kotlin {
-        kotlin_callee(node)?
-    } else {
-        call_name_fields(language)
+    let mut callee = match language {
+        Language::Kotlin => kotlin_callee(node)?,
+        Language::Swift => swift_callee(node)?,
+        _ => call_name_fields(language)
             .iter()
-            .find_map(|field| node.child_by_field_name(field))?
+            .find_map(|field| node.child_by_field_name(field))?,
     };
     // `new Foo<T>()`: drop the type arguments.
     if language == Language::Java && callee.kind() == "generic_type" {

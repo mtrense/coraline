@@ -118,6 +118,17 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             // kotlin_node_name: `type_alias` name, `companion_object` name
             &["type", "name"],
         ),
+        // swift_callee
+        Language::Swift => (
+            &[
+                "constructor_expression",
+                "user_type",
+                "type_identifier",
+                "simple_identifier",
+                "navigation_expression",
+            ],
+            &["constructed_type", "suffix"],
+        ),
         _ => (&[], &[]),
     }
 }
@@ -153,11 +164,9 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         Language::Ruby => &["kind:def", "kind:method_call"],
         Language::Swift => &[
-            "field:function",
             "field:module_name",
             "kind:enum_declaration",
             "kind:extension_declaration",
-            "kind:function_call_expression",
             "kind:struct_declaration",
         ],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
