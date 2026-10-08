@@ -228,3 +228,27 @@ fn extraction_names_exist_in_grammars() {
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// Unsupported languages are never parsed (`is_language_supported` gates
+/// indexing), so any parser or mapping for them is dead, unchecked code.
+/// To add a language, enable it in `is_language_supported` together with
+/// its mappings so the guard above covers them.
+#[test]
+fn unsupported_languages_have_no_extraction_code() {
+    let offenders: Vec<Language> = ALL_LANGUAGES
+        .iter()
+        .copied()
+        .filter(|language| !is_language_supported(language))
+        .filter(|&language| {
+            language_to_parser(language).is_some()
+                || !node_kind_mappings(language).is_empty()
+                || !call_expression_kinds(language).is_empty()
+                || !call_name_fields(language).is_empty()
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "unsupported languages with parser/mappings: {offenders:?}"
+    );
+}

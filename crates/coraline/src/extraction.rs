@@ -598,33 +598,13 @@ fn language_to_parser(language: Language) -> Option<tree_sitter::Language> {
             Some(tree_sitter::Language::new(tree_sitter_c_sharp::LANGUAGE))
         }
         Language::Ruby => Some(tree_sitter::Language::new(tree_sitter_ruby::LANGUAGE)),
-        // New language parsers
-        Language::Bash => Some(tree_sitter::Language::new(tree_sitter_bash::LANGUAGE)),
-        Language::Dart => Some(tree_sitter::Language::new(tree_sitter_dart::LANGUAGE)),
-        Language::Elixir => Some(tree_sitter::Language::new(tree_sitter_elixir::LANGUAGE)),
-        Language::Elm => Some(tree_sitter::Language::new(tree_sitter_elm::LANGUAGE)),
-        Language::Erlang => Some(tree_sitter::Language::new(tree_sitter_erlang::LANGUAGE)),
-        Language::Fortran => Some(tree_sitter::Language::new(tree_sitter_fortran::LANGUAGE)),
-        Language::Groovy => Some(tree_sitter::Language::new(tree_sitter_groovy::LANGUAGE)),
-        Language::Haskell => Some(tree_sitter::Language::new(tree_sitter_haskell::LANGUAGE)),
-        Language::Julia => Some(tree_sitter::Language::new(tree_sitter_julia::LANGUAGE)),
-        Language::Lua => Some(tree_sitter::Language::new(tree_sitter_lua::LANGUAGE)),
-        Language::Matlab => Some(tree_sitter::Language::new(tree_sitter_matlab::LANGUAGE)),
-        Language::Nix => Some(tree_sitter::Language::new(tree_sitter_nix::LANGUAGE)),
-        Language::Perl => Some(tree_sitter::Language::new(tree_sitter_perl::LANGUAGE)),
-        Language::Powershell => Some(tree_sitter::Language::new(tree_sitter_powershell::LANGUAGE)),
-        Language::R => Some(tree_sitter::Language::new(tree_sitter_r::LANGUAGE)),
-        Language::Scala => Some(tree_sitter::Language::new(tree_sitter_scala::LANGUAGE)),
-        Language::Yaml => Some(tree_sitter::Language::new(tree_sitter_yaml::LANGUAGE)),
-        Language::Zig => Some(tree_sitter::Language::new(tree_sitter_zig::LANGUAGE)),
-        // Recently compatible parsers (updated to work with tree-sitter 0.26)
         Language::Php => Some(tree_sitter::Language::new(tree_sitter_php::LANGUAGE_PHP)),
         Language::Swift => Some(tree_sitter::Language::new(tree_sitter_swift::LANGUAGE)),
         Language::Kotlin => Some(tree_sitter::Language::new(tree_sitter_kotlin_ng::LANGUAGE)),
         Language::Markdown => Some(tree_sitter_markdown_updated::language()),
-        Language::Toml => Some(tree_sitter::Language::new(tree_sitter_toml_ng::LANGUAGE)),
-        // Unsupported languages
-        Language::Liquid | Language::Unknown => None,
+        // Unsupported languages (see `config::is_language_supported`) and
+        // languages without a tree-sitter grammar.
+        _ => None,
     }
 }
 
@@ -1275,189 +1255,8 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
             }]
         }
 
-        // === Bash ===
-        Language::Bash => {
-            let name = module_path
-                .trim_end_matches(".sh")
-                .split('/')
-                .next_back()
-                .unwrap_or(&module_path)
-                .to_string();
-            vec![ImportSymbol {
-                local_name: name.clone(),
-                module_path,
-                export_name: Some(name),
-            }]
-        }
-
-        // === Lua ===
-        Language::Lua => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Elixir ===
-        Language::Elixir => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Erlang ===
-        Language::Erlang => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Haskell ===
-        Language::Haskell => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Scala ===
-        Language::Scala => {
-            let last_part = module_path
-                .rsplit('.')
-                .next()
-                .unwrap_or(&module_path)
-                .to_string();
-            vec![ImportSymbol {
-                local_name: last_part.clone(),
-                module_path,
-                export_name: Some(last_part),
-            }]
-        }
-
-        // === Groovy ===
-        Language::Groovy => {
-            let last_part = module_path
-                .rsplit('.')
-                .next()
-                .unwrap_or(&module_path)
-                .to_string();
-            vec![ImportSymbol {
-                local_name: last_part.clone(),
-                module_path,
-                export_name: Some(last_part),
-            }]
-        }
-
-        // === Dart ===
-        Language::Dart => {
-            let name = module_path
-                .trim_start_matches("package:")
-                .split('/')
-                .next_back()
-                .unwrap_or(&module_path)
-                .trim_end_matches(".dart")
-                .to_string();
-            vec![ImportSymbol {
-                local_name: name.clone(),
-                module_path,
-                export_name: Some(name),
-            }]
-        }
-
-        // === Julia ===
-        Language::Julia => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Nix ===
-        Language::Nix => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === R ===
-        Language::R => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === MATLAB ===
-        Language::Matlab => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Fortran ===
-        Language::Fortran => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Elm ===
-        Language::Elm => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Perl ===
-        Language::Perl => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === PowerShell ===
-        Language::Powershell => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Zig ===
-        Language::Zig => {
-            vec![ImportSymbol {
-                local_name: module_path.clone(),
-                module_path,
-                export_name: None,
-            }]
-        }
-
-        // === Blazor, Markup (no imports) ===
-        Language::Blazor
-        | Language::Markdown
-        | Language::Toml
-        | Language::Yaml
-        | Language::Liquid
-        | Language::Unknown => Vec::new(),
+        // Blazor, markup and unsupported languages: no imports
+        _ => Vec::new(),
     }
 }
 
@@ -1478,23 +1277,6 @@ fn import_path_field(language: Language) -> &'static str {
         Language::Ruby => "argument",
         Language::Swift => "module_name",
         Language::Kotlin => "type",
-        Language::Bash => "argument",
-        Language::Lua => "argument",
-        Language::Elixir => "module",
-        Language::Erlang => "name",
-        Language::Haskell => "module",
-        Language::Scala => "path",
-        Language::Groovy => "name",
-        Language::Dart => "uri",
-        Language::Julia => "module",
-        Language::Nix => "source",
-        Language::R => "argument",
-        Language::Matlab => "argument",
-        Language::Fortran => "name",
-        Language::Elm => "module_name",
-        Language::Perl => "module",
-        Language::Powershell => "name",
-        Language::Zig => "path",
         _ => "source",
     }
 }
@@ -1839,148 +1621,8 @@ fn export_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Export
         // === Kotlin: implicit (all top-level unless private) ===
         Language::Kotlin => Vec::new(),
 
-        // === Bash: export statement ===
-        Language::Bash => {
-            if node.kind() == "command" {
-                let cmd_text = node.utf8_text(source.as_bytes()).ok().unwrap_or("");
-                if cmd_text.starts_with("export ") {
-                    let var_name = cmd_text
-                        .strip_prefix("export ")
-                        .and_then(|s| s.split('=').next())
-                        .map(|s| s.trim().to_string());
-
-                    if let Some(name) = var_name {
-                        return vec![ExportSymbol {
-                            name,
-                            module_path: None,
-                        }];
-                    }
-                }
-            }
-            Vec::new()
-        }
-
-        // === Lua: implicit return/assignment ===
-        Language::Lua => Vec::new(),
-
-        // === Elixir: defmodule defines exports ===
-        Language::Elixir => Vec::new(),
-
-        // === Erlang: -export directive ===
-        Language::Erlang => {
-            if node.kind() == "attribute" {
-                let attr_text = node.utf8_text(source.as_bytes()).ok().unwrap_or("");
-                if attr_text.contains("export") {
-                    // Parse `-export([func/arity]).`
-                    let exports_str = attr_text
-                        .split('[')
-                        .nth(1)
-                        .and_then(|s| s.split(']').next())
-                        .unwrap_or("");
-
-                    let names: Vec<ExportSymbol> = exports_str
-                        .split(',')
-                        .filter_map(|exp| {
-                            let func_name = exp.split('/').next().map(|s| s.trim().to_string())?;
-                            Some(ExportSymbol {
-                                name: func_name,
-                                module_path: None,
-                            })
-                        })
-                        .collect();
-
-                    return names;
-                }
-            }
-            Vec::new()
-        }
-
-        // === Haskell: module declaration with export list ===
-        Language::Haskell => Vec::new(),
-
-        // === Scala: implicit (all top-level unless private) ===
-        Language::Scala => Vec::new(),
-
-        // === Groovy: implicit ===
-        Language::Groovy => Vec::new(),
-
-        // === Dart: explicit export ===
-        Language::Dart => {
-            if node.kind() == "import_or_export_statement" {
-                let stmt_text = node.utf8_text(source.as_bytes()).unwrap_or("");
-                if stmt_text.starts_with("export ") {
-                    if let Some(uri) = stmt_text
-                        .strip_prefix("export ")
-                        .and_then(|s| s.split(['\'', '"']).nth(1))
-                        .map(|s| s.to_string())
-                    {
-                        return vec![ExportSymbol {
-                            name: uri.clone(),
-                            module_path: Some(uri),
-                        }];
-                    }
-                }
-            }
-            Vec::new()
-        }
-
-        // === Julia: implicit (all public names) ===
-        Language::Julia => Vec::new(),
-
-        // === Nix: implicit (let-in returns) ===
-        Language::Nix => Vec::new(),
-
-        // === R: implicit (global assignment) ===
-        Language::R => Vec::new(),
-
-        // === MATLAB: implicit (global scope) ===
-        Language::Matlab => Vec::new(),
-
-        // === Fortran: module exports ===
-        Language::Fortran => Vec::new(),
-
-        // === Elm: module declaration with export list ===
-        Language::Elm => Vec::new(),
-
-        // === Perl: @EXPORT, @EXPORT_OK ===
-        Language::Perl => {
-            if node.kind() == "assignment" {
-                let assign_text = node.utf8_text(source.as_bytes()).ok().unwrap_or("");
-                if assign_text.contains("@EXPORT") {
-                    // Parse @EXPORT = qw(func1 func2 ...)
-                    let funcs_str = assign_text
-                        .split('(')
-                        .nth(1)
-                        .and_then(|s| s.split(')').next())
-                        .unwrap_or("");
-
-                    let names: Vec<ExportSymbol> = funcs_str
-                        .split_whitespace()
-                        .map(|func| ExportSymbol {
-                            name: func.to_string(),
-                            module_path: None,
-                        })
-                        .collect();
-
-                    return names;
-                }
-            }
-            Vec::new()
-        }
-
-        // === PowerShell: implicit (function names) ===
-        Language::Powershell => Vec::new(),
-
-        // === Zig: implicit (public by default) ===
-        Language::Zig => Vec::new(),
-
-        // === Blazor, Markup (no exports) ===
-        Language::Blazor
-        | Language::Markdown
-        | Language::Toml
-        | Language::Yaml
-        | Language::Liquid
-        | Language::Unknown => Vec::new(),
+        // Blazor, markup and unsupported languages: no exports
+        _ => Vec::new(),
     }
 }
 
@@ -2093,30 +1735,8 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::Swift => &["function_call_expression"],
         // Kotlin
         Language::Kotlin => &["call_expression"],
-        // Bash
-        Language::Bash => &["command"],
-        // Lua
-        Language::Lua => &["function_call"],
-        // Other languages with common patterns
-        Language::Elixir | Language::Erlang => &["call"],
-        Language::Haskell => &["apply"],
-        Language::Scala => &["call"],
-        Language::Groovy => &["method_call"],
-        Language::Dart => &["method_invocation"],
-        Language::Julia => &["call"],
-        Language::Nix => &["apply"],
-        Language::R => &["call"],
-        Language::Matlab => &["command"],
-        Language::Fortran => &["call_expression"],
-        Language::Elm => &["function_call_expression"],
-        Language::Perl => &["method_call"],
-        Language::Powershell => &["command"],
-        // Zig
-        Language::Zig => &["call_expression"],
-        // Markup/config files don't have calls
-        Language::Markdown | Language::Toml | Language::Yaml => &[],
-        // Unsupported
-        Language::Liquid | Language::Blazor | Language::Unknown => &[],
+        // Markup, Blazor and unsupported languages: no calls
+        _ => &[],
     }
 }
 
@@ -2143,22 +1763,6 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         Language::Ruby => &["method"],
         Language::Swift => &["function"],
         Language::Kotlin => &["callee"],
-        Language::Bash => &["name"],
-        Language::Lua => &["function"],
-        Language::Elixir => &["function"],
-        Language::Erlang => &["module"],
-        Language::Haskell => &["function"],
-        Language::Scala => &["function"],
-        Language::Groovy => &["method"],
-        Language::Dart => &["method"],
-        Language::Julia => &["function"],
-        Language::Nix => &["function"],
-        Language::R => &["function"],
-        Language::Matlab => &["function"],
-        Language::Fortran => &["function"],
-        Language::Elm => &["function"],
-        Language::Perl => &["method"],
-        Language::Powershell => &["name"],
         _ => &[],
     }
 }
@@ -2346,144 +1950,6 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("import_alias", NodeKind::Import, false),
         ],
 
-        // === Bash ===
-        Language::Bash => &[
-            ("function_definition", NodeKind::Function, false),
-            ("variable_assignment", NodeKind::Variable, false),
-            ("declaration_command", NodeKind::Variable, false),
-        ],
-
-        // === Lua ===
-        Language::Lua => &[
-            ("function_declaration", NodeKind::Function, false),
-            ("method_index_expression", NodeKind::Method, false),
-            ("assignment_statement", NodeKind::Variable, false),
-            ("local_declaration", NodeKind::Variable, false),
-        ],
-
-        // === Elixir ===
-        Language::Elixir => &[
-            ("definition", NodeKind::Function, false),
-            ("private_definition", NodeKind::Function, false),
-            ("module", NodeKind::Module, true),
-            ("struct", NodeKind::Struct, true),
-            ("protocol", NodeKind::Protocol, true),
-            ("import", NodeKind::Import, false),
-            ("alias", NodeKind::Import, false),
-            ("require", NodeKind::Import, false),
-        ],
-
-        // === Erlang ===
-        Language::Erlang => &[
-            ("function", NodeKind::Function, false),
-            ("attribute", NodeKind::Variable, false),
-            ("module_directive", NodeKind::Module, true),
-            ("export_attribute", NodeKind::Export, false),
-        ],
-
-        // === Haskell ===
-        Language::Haskell => &[
-            ("function", NodeKind::Function, false),
-            ("function_declaration", NodeKind::Function, false),
-            ("type_class_declaration", NodeKind::Protocol, true),
-            ("type_declaration", NodeKind::TypeAlias, false),
-            ("data_type_declaration", NodeKind::Struct, true),
-            ("module", NodeKind::Module, true),
-            ("import", NodeKind::Import, false),
-        ],
-
-        // === Scala ===
-        Language::Scala => &[
-            ("function_definition", NodeKind::Function, false),
-            ("class_definition", NodeKind::Class, true),
-            ("object_definition", NodeKind::Class, true),
-            ("trait_definition", NodeKind::Trait, true),
-            ("type_alias_definition", NodeKind::TypeAlias, false),
-            ("import_statement", NodeKind::Import, false),
-            ("val_definition", NodeKind::Variable, false),
-            ("var_definition", NodeKind::Variable, false),
-        ],
-
-        // === Groovy ===
-        Language::Groovy => &[
-            ("method", NodeKind::Method, false),
-            ("class_declaration", NodeKind::Class, true),
-            ("interface_declaration", NodeKind::Interface, true),
-            ("import_statement", NodeKind::Import, false),
-            ("variable_declarator", NodeKind::Variable, false),
-        ],
-
-        // === Dart ===
-        Language::Dart => &[
-            ("function_declaration", NodeKind::Function, false),
-            ("method_definition", NodeKind::Method, false),
-            ("class_definition", NodeKind::Class, true),
-            ("mixin_declaration", NodeKind::Trait, true),
-            ("enum_declaration", NodeKind::Enum, true),
-            ("variable_declaration", NodeKind::Variable, false),
-            ("import_or_export_statement", NodeKind::Import, false),
-        ],
-
-        // === Julia ===
-        Language::Julia => &[
-            ("function_definition", NodeKind::Function, false),
-            ("method_definition", NodeKind::Method, false),
-            ("abstract_definition", NodeKind::Interface, true),
-            ("primitive_definition", NodeKind::Struct, true),
-            ("const_statement", NodeKind::Constant, false),
-            ("import_statement", NodeKind::Import, false),
-            ("using_import_statement", NodeKind::Import, false),
-        ],
-
-        // === Nix ===
-        Language::Nix => &[
-            ("function_expression", NodeKind::Function, false),
-            ("binding", NodeKind::Variable, false),
-        ],
-
-        // === R ===
-        Language::R => &[
-            ("function_definition", NodeKind::Function, false),
-            ("assignment", NodeKind::Variable, false),
-            ("super_assignment", NodeKind::Variable, false),
-        ],
-
-        // === MATLAB ===
-        Language::Matlab => &[
-            ("function_definition", NodeKind::Function, false),
-            ("field_assignment", NodeKind::Variable, false),
-        ],
-
-        // === Fortran ===
-        Language::Fortran => &[
-            ("function_definition", NodeKind::Function, false),
-            ("subroutine_definition", NodeKind::Function, false),
-            ("interface_definition", NodeKind::Interface, true),
-            ("type_definition", NodeKind::Struct, true),
-            ("module_definition", NodeKind::Module, true),
-            ("variable_declaration", NodeKind::Variable, false),
-        ],
-
-        // === Elm ===
-        Language::Elm => &[
-            ("function_declaration", NodeKind::Function, false),
-            ("type_alias_declaration", NodeKind::TypeAlias, false),
-            ("type_declaration", NodeKind::Struct, true),
-            ("import_clause", NodeKind::Import, false),
-        ],
-
-        // === Perl ===
-        Language::Perl => &[
-            ("subroutine_declaration", NodeKind::Function, false),
-            ("variable_declaration", NodeKind::Variable, false),
-        ],
-
-        // === PowerShell ===
-        Language::Powershell => &[
-            ("function_statement", NodeKind::Function, false),
-            ("variable_assignment", NodeKind::Variable, false),
-        ],
-
         // === Blazor ===
         Language::Blazor => &[
             ("element", NodeKind::Component, true),
@@ -2491,22 +1957,8 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("method_definition", NodeKind::Method, false),
         ],
 
-        // === Zig ===
-        Language::Zig => &[
-            ("fn_decl", NodeKind::Function, false),
-            ("struct_type_start", NodeKind::Struct, true),
-            ("enum_decl", NodeKind::Enum, true),
-            ("const_decl", NodeKind::Constant, false),
-            ("var_decl", NodeKind::Variable, false),
-            ("builtin_call_expression", NodeKind::Function, false),
-        ],
-
-        // === Markup/Config (minimal/no extraction) ===
-        Language::Markdown
-        | Language::Toml
-        | Language::Yaml
-        | Language::Liquid
-        | Language::Unknown => &[],
+        // Markup and unsupported languages: no extraction
+        _ => &[],
     }
 }
 

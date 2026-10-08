@@ -1,47 +1,28 @@
 # Supported Languages
 
-Coraline uses [tree-sitter](https://tree-sitter.github.io/) for parsing, enabling support for 33 programming languages with AST-level precision.
+Coraline uses [tree-sitter](https://tree-sitter.github.io/) for parsing, enabling support for 17 languages with AST-level precision.
 
 ## Language Support Table
 
 | Language | Status | tree-sitter grammar | Framework Support |
 |---|---|---|---|
-| **Bash** | ✅ Full | `tree-sitter-bash` 0.25.1 | - |
 | **C** | ✅ Full | `tree-sitter-c` 0.23 | - |
 | **C++** | ✅ Full | `tree-sitter-cpp` 0.23 | - |
 | **C#** | ✅ Full | `tree-sitter-c-sharp` 0.23 | .NET |
 | **Blazor** | ✅ Full | `tree-sitter-blazor` 0.1.1 (custom) | Blazor components |
-| **Dart** | ✅ Full | `tree-sitter-dart` 0.0.4 | Flutter |
-| **Elixir** | ✅ Full | `tree-sitter-elixir` 0.3.4 | Phoenix |
-| **Elm** | ✅ Full | `tree-sitter-elm` 5.9.0 | - |
-| **Erlang** | ✅ Full | `tree-sitter-erlang` 0.15.0 | OTP |
-| **Fortran** | ✅ Full | `tree-sitter-fortran` 0.5.1 | - |
 | **Go** | ✅ Full | `tree-sitter-go` 0.23 | - |
-| **Groovy** | ✅ Full | `tree-sitter-groovy` 0.1.2 | Gradle |
-| **Haskell** | ✅ Full | `tree-sitter-haskell` 0.23.1 | - |
 | **Java** | ✅ Full | `tree-sitter-java` 0.23 | Spring |
 | **JavaScript** | ✅ Full | `tree-sitter-javascript` 0.25.0 | Node.js |
 | **JSX** | ✅ Full | `tree-sitter-javascript` 0.25.0 | React |
-| **Julia** | ✅ Full | `tree-sitter-julia` 0.23.1 | - |
 | **Kotlin** | ✅ Full | `tree-sitter-kotlin-ng` 1.1.0 | Android |
-| **Lua** | ✅ Full | `tree-sitter-lua` 0.4.1 | - |
 | **Markdown** | ✅ Full | `tree-sitter-markdown-fork` 0.7.3 | - |
-| **MATLAB** | ✅ Full | `tree-sitter-matlab` 1.3.0 | - |
-| **Nix** | ✅ Full | `tree-sitter-nix` 0.3.0 | - |
-| **Perl** | ✅ Full | `tree-sitter-perl` 1.1.2 | - |
 | **PHP** | ✅ Full | `tree-sitter-php` 0.24.2 | Laravel |
-| **PowerShell** | ✅ Full | `tree-sitter-powershell` 0.25.10 | - |
 | **Python** | ✅ Full | `tree-sitter-python` 0.23 | Django, Flask |
-| **R** | ✅ Full | `tree-sitter-r` 1.2.0 | - |
 | **Ruby** | ✅ Full | `tree-sitter-ruby` 0.23 | Rails |
 | **Rust** | ✅ Full | `tree-sitter-rust` 0.24.0 | - |
-| **Scala** | ✅ Full | `tree-sitter-scala` 0.24.0 | - |
 | **Swift** | ✅ Full | `tree-sitter-swift` 0.7.1 | iOS/macOS |
-| **TOML** | ✅ Full | `tree-sitter-toml-ng` 0.7.0 | Config files |
 | **TypeScript** | ✅ Full | `tree-sitter-typescript` 0.23.1 | Node.js |
 | **TSX** | ✅ Full | `tree-sitter-typescript` 0.23.1 | React |
-| **YAML** | ✅ Full | `tree-sitter-yaml` 0.7.2 | Config files |
-| **Zig** | ✅ Full | `tree-sitter-zig` 1.1.2 | - |
 
 ## Language Detection
 
@@ -64,27 +45,8 @@ Coraline detects languages by file extension:
 | `.rb` | Ruby |
 | `.swift` | Swift |
 | `.kt`, `.kts` | Kotlin |
-| `.sh`, `.bash` | Bash |
-| `.ps1`, `.psm1` | PowerShell |
 | `.razor` | Blazor |
-| `.dart` | Dart |
-| `.ex`, `.exs` | Elixir |
-| `.elm` | Elm |
-| `.erl`, `.hrl` | Erlang |
-| `.f90`, `.f95`, `.f03` | Fortran |
-| `.groovy`, `.gradle` | Groovy |
-| `.hs` | Haskell |
-| `.jl` | Julia |
-| `.lua` | Lua |
 | `.md`, `.markdown` | Markdown |
-| `.m` | MATLAB |
-| `.nix` | Nix |
-| `.pl`, `.pm` | Perl |
-| `.r`, `.R` | R |
-| `.scala`, `.sc` | Scala |
-| `.toml` | TOML |
-| `.yaml`, `.yml` | YAML |
-| `.zig` | Zig |
 
 ## Node Types by Language
 
@@ -99,14 +61,7 @@ Different languages produce different node kinds:
 - `enum`
 - `enum_member`
 
-### Functional (Haskell, Scala, Elixir, Erlang)
-- `function`
-- `module`
-- `trait` (Scala)
-- `type_alias`
-- `constant`
-
-### Systems (Rust, C, C++, Zig)
+### Systems (Rust, C, C++)
 - `struct`
 - `function`
 - `trait` (Rust)
@@ -114,7 +69,7 @@ Different languages produce different node kinds:
 - `type_alias`
 - `module` (Rust)
 
-### Scripting (Python, Ruby, PHP, Bash)
+### Scripting (Python, Ruby, PHP)
 - `function`
 - `class`
 - `method`
@@ -129,9 +84,8 @@ Different languages produce different node kinds:
 - `interface` (TypeScript)
 - `type_alias` (TypeScript)
 
-### Markup (Markdown, YAML, TOML)
+### Markup (Markdown)
 - `module` (file-level)
-- `constant` (YAML/TOML keys)
 
 ## Framework-Specific Features
 
@@ -167,7 +121,6 @@ Different languages produce different node kinds:
 
 ### Others
 - **Swift/Kotlin**: Protocol/interface conformance
-- **Elixir**: Phoenix routing, Ecto schemas
 - **Java**: Spring annotations, package resolution
 
 ## Cross-Language Support
@@ -179,7 +132,7 @@ project/
 ├── backend/           (Rust)
 ├── frontend/          (TypeScript + React)
 ├── mobile/            (Swift, Kotlin)
-└── scripts/           (Python, Bash)
+└── scripts/           (Python)
 ```
 
 All languages are indexed into a unified graph. Cross-language references (e.g., TypeScript calling Rust WASM) are tracked as `unresolved` edges unless framework resolvers are available.
@@ -230,14 +183,6 @@ See [Development Guide](./development.md) for contribution instructions.
 - Only headings and code blocks are indexed
 - No inline link tracking
 
-### YAML/TOML
-- Config keys indexed as `constant` nodes
-- No deep structure analysis
-
-### Bash/PowerShell
-- Function detection only
-- Limited variable tracking
-
 ### Future Enhancements
 - SQL query extraction (embedded SQL strings)
 - HTML/CSS parsing (currently ignored)
@@ -252,8 +197,8 @@ Parse speed varies by grammar complexity:
 |---|---|---|
 | Rust, Go, C | Fast | Simple, deterministic grammars |
 | TypeScript, Python | Medium | More complex syntax rules |
-| C++, Scala | Slower | High grammar complexity |
-| Markdown, YAML | Very Fast | Simple structure |
+| C++ | Slower | High grammar complexity |
+| Markdown | Very Fast | Simple structure |
 
 Actual impact on indexing is minimal (<5% variation) for most projects.
 

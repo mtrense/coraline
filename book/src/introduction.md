@@ -15,7 +15,7 @@ Coraline combines ideas from [CodeGraph](https://github.com/colbymchenry/codegra
 ## Key Features
 
 ### Code Intelligence
-- AST-based parsing using tree-sitter (33 languages supported)
+- AST-based parsing using tree-sitter (17 languages supported)
 - Cross-file reference resolution
 - Impact analysis for understanding change ripple effects
 - Symbol search with FTS5 full-text indexing
