@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kotlin extraction** — calls, imports (incl. aliases and wildcards), properties, interfaces, enums and enum entries, packages, secondary constructors, companion objects and type aliases were missing because the extractor used node kinds / field names that don't exist in `tree-sitter-kotlin-ng`. Top-level non-`private` declarations are now emitted as implicit exports.
 - **Calls, imports and declarations in other languages** that were lost to wrong node kinds / field names: Java method calls and `new Foo()`; Swift calls, structs, enums and extensions; Ruby calls and `def self.x`; C/C++ functions, methods, namespaces and macros (previously no function nodes at all); PHP member / static / nullsafe calls and `use` imports; Go imports and call names (no more garbage names from func-literal callees); Rust `use` lists, `pub use` re-exports and macro calls; C# qualified, aliased, `static` and `global` using directives and `public` visibility; Python `from x import A, B` (only `A` was kept) and plain `import x`; JS/TS arrow functions and function expressions named after their variable (calls inside them had no scope).
 - **Blazor** (`.razor`) files are indexed at file level only. They were parsed with the C# grammar, which extracted nothing.
+- **Cross-directory calls resolve through imports, packages and modules** — the resolver only linked calls within one file or directory, so calls into other packages (Java / Kotlin / Go / C# / PHP), modules and crates were dropped. Calls now resolve through the import binding the name (with import paths normalised per language: dotted, `::`, `\`, relative `./` / `.x` / `crate::` / `super::`, quoted includes; Export nodes followed to the declaration), through an imported qualifier (`Report.describe()`, Go `model.Describe()`), and through names in scope: wildcard imports, C/C++ includes, C# `using` namespaces, the caller's own package / namespace, Ruby `require` / `require_relative`, and Swift modules (SPM `Sources/<Target>/` of a `Package.swift`, or an Xcode project). Same-named functions in unrelated directories without an import are still never linked (#43).
+- **Qualified calls no longer resolve to unrelated same-file functions** — `String.format(..)` inside `fun format` was a self-edge; qualifiers naming another type, or receivers of free functions, now rule candidates out.
+- **Overloads and same-named methods** — calls with several candidates were dropped. They are narrowed by receiver (`Type.m()`, the caller's own type for unqualified / `this.m()` calls); overloads of one method all get an edge, and up to three candidates of different types get an edge each with confidence `0.3`.
+- **Ruby `require` / `require_relative`** with a literal path are Import nodes instead of calls to `require`.
+- Java `package` declarations, wildcard / static imports and C# file-scoped namespaces are extracted.
+
+### Changed
+
+- Same-file calls with a qualifier other than `this` / `self` or a type declared in the file (`obj.m()`, `util.f()`) are resolved by the resolver (confidence `0.5`) instead of directly at extraction (`1.0`), so an import binding the qualifier takes precedence.
+- DB schema v5: `unresolved_refs.qualifier` stores the call's qualifier (additive migration).
 
 ### Removed
 
@@ -22,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Grammar guard test: every node kind and field name in the extraction tables must exist in the language's tree-sitter grammar.
 - Per-language extraction tests (`tests/<lang>_extraction_test.rs`) and end-to-end edge fixture tests (`tests/edge_fixture_test.rs`) asserting stored `calls` / `imports` edges and `coraline_callers` / `coraline_callees` results for Kotlin, Java, Swift, Go, Python, TypeScript, C#, Rust, C/C++, Ruby and PHP.
+- Resolver tests (`tests/resolver_test.rs`): cross-dir resolution per language, plus regression tests mirroring #43 (same-named functions in unrelated directories / packages / Swift projects without an import stay unlinked).
 
 ## [0.13.1] - 2026-09-08
 

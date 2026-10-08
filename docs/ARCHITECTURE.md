@@ -26,6 +26,8 @@ crates/coraline/src/
 ├── resolution/         # Cross-file reference resolution
 │   ├── mod.rs          # Core resolver + framework fallback
 │   ├── import_path.rs  # Import module paths → project files
+│   ├── receiver.rs     # Which declarations a call qualifier / receiver admits
+│   ├── swift_module.rs # Swift modules from Package.swift / *.xcodeproj
 │   └── frameworks/     # Language/framework-specific resolvers
 │       ├── mod.rs      # FrameworkResolver trait + registry
 │       ├── rust.rs     # crate::, super::, self:: resolution
@@ -112,7 +114,8 @@ Every `Edge` carries a `confidence: f32` in `[0.0, 1.0]`:
 
 - `1.0` — direct AST-extracted (caller wrote the symbol syntactically; no resolution was needed)
 - `0.95` — strongly-typed Rust path (`crate::` / `super::` / `self::`)
-- `0.5` — generic name match / framework fallback / heuristic ranker
+- `0.5` — generic name match / framework fallback / heuristic ranker (also each overload when a call matches several overloads of one method)
+- `0.3` — one of up to three equally ranked call targets of different types (`shape.area()` with `Circle.area` and `Square.area` in scope); the resolver can't tell which without type information
 
 `coraline_callers` / `coraline_callees` / `coraline_find_references` accept a `min_confidence` parameter that filters edges below a caller-supplied threshold. Default `0.0` includes every edge; a typical working value is `0.8` to suppress generic matches.
 
@@ -140,12 +143,13 @@ Steps 6 and 7 run as part of every `coraline index` and `coraline sync` after ex
 
 Resolution happens in two passes:
 
-1. **Name-based**: The `resolution::resolve_unresolved` function looks up reference names in the DB and ranks the candidates; a reference resolves only if the best tier has exactly one candidate:
+1. **Name-based**: The `resolution::resolve_unresolved` function looks up reference names in the DB and ranks the candidates. A call's qualifier first rules out candidates it can't refer to (`resolution/receiver.rs`): `String.format(..)` never resolves to a same-file `format` (nor to the caller itself), `Circle.create()` only to members of `Circle` (incl. its companion), `this.m()` / `self.m()` only to methods. Tiers:
    1. Declarations behind the import that binds the name (`import { describe }`, `use crate::a::describe`, Kotlin `import app.a.describe`; Export nodes are followed to the declaration). Import module paths are mapped to project files per language (`resolution/import_path.rs`: dotted / `::` / `\` paths, relative `./`, `.x`, `crate::`, `super::`, quoted includes) or to the packages / namespaces files declare.
    2. If the call's qualifier names an import (`Report.describe()`, Go `model.Describe()`, `util.load()`), only declarations in that import's module, otherwise nothing.
    3. Same file, then same directory.
-   4. Names in scope without naming the callee: wildcard imports (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++ includes, C# `using` namespaces, and the caller's own package / namespace.
+   4. Names in scope without naming the callee: wildcard imports (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++ includes, Ruby `require` / `require_relative`, C# `using` namespaces, Swift `import <Target>` (SPM target), and the caller's own package / namespace / Swift module. Swift modules come from build manifests only (`resolution/swift_module.rs`): each `Sources/<Target>/` / `Tests/<Target>/` of a `Package.swift` package, or everything below a directory containing a `*.xcodeproj`; own-module declarations shadow imported ones.
    For calls there is no further fallback: same-named functions in unrelated directories are never linked by name alone (upstream #43).
+   If the best tier holds several candidates, calls are narrowed by receiver (`Type.m()` → members of `Type`; unqualified and `this.m()` → the caller's own type). Overloads of one method all get an edge; up to three candidates of different types get an edge each with confidence `0.3`; more stay unresolved. Other reference kinds and framework fallbacks need exactly one candidate.
 
 2. **Framework fallback**: When no candidates score above threshold, `framework_fallback` is called. The registered `FrameworkResolver` implementations detect the active framework (by checking for `Cargo.toml`, `package.json`, `artisan`, `.csproj`, etc.) and return candidate file paths. Nodes from those files are then loaded and filtered by the referenced symbol name.
 

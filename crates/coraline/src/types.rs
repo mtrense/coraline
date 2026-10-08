@@ -145,6 +145,8 @@ pub struct Edge {
     /// - `0.95` — resolved via a strongly-typed Rust path
     ///   (`crate::`, `super::`, `self::`).
     /// - `0.5`  — generic name match / framework fallback / heuristic ranker.
+    /// - `0.3`  — one of several equally ranked call targets of different
+    ///   types (no type information to pick one).
     ///
     /// Older rows created before this column existed default to `1.0` so the
     /// column can be added additively without backfill logic.

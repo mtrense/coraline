@@ -98,8 +98,8 @@ coraline/
 | `tests/extraction_test.rs` | 4 | Integration: AST parsing |
 | `src/extraction/grammar_guard_tests.rs` | - | Unit: every node kind / field name in the extraction tables exists in its tree-sitter grammar |
 | `tests/<lang>_extraction_test.rs` | - | Integration: per-language extraction (nodes, calls, imports), helpers in `tests/common/mod.rs` |
-| `tests/edge_fixture_test.rs` | 3 (3 ignored) | Integration: per-language multi-directory project, stored `Calls` / `Imports` edges + `coraline_callers` / `coraline_callees`; ignored tests hold cross-dir calls and Extends/Implements/Instantiates expectations not implemented yet |
-| `tests/resolver_test.rs` | - | Integration: cross-dir `Calls` resolution; unrelated dirs with same-named functions and no import must stay unlinked (upstream #43) |
+| `tests/edge_fixture_test.rs` | 6 (2 ignored) | Integration: per-language multi-directory project, stored same-file / same-dir / cross-dir `Calls` and `Imports` edges + `coraline_callers` / `coraline_callees`; ignored tests hold Extends/Implements/Instantiates expectations not implemented yet |
+| `tests/resolver_test.rs` | - | Integration: `Calls` resolution through imports, packages, Ruby requires and Swift modules, qualifier / receiver filtering, overloads and ambiguous calls; unrelated dirs with same-named functions and no import must stay unlinked (upstream #43) |
 | `tests/graph_test.rs` | 4 | Integration: graph traversal |
 | `tests/context_test.rs` | 5 | Integration: context building |
 
