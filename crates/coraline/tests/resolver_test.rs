@@ -1162,3 +1162,83 @@ fn ruby_requires_resolve_cross_dir_calls() {
         "{calls:#?}"
     );
 }
+
+/// Swift has no per-file imports within a module: every file of an SPM
+/// target (`Sources/<Target>/`) or of an Xcode project sees the others.
+/// Other targets are visible through `import <Target>`.
+#[test]
+fn swift_module_members_and_imported_targets_resolve() {
+    assert_calls(
+        &[
+            ("spm/Package.swift", "// swift-tools-version:5.9\n"),
+            (
+                "spm/Sources/App/a/Report.swift",
+                "func describe(_ x: Double) -> String { return \"\" }\n",
+            ),
+            (
+                "spm/Sources/App/b/Main.swift",
+                "import Shapes\n\nfunc run() { _ = describe(1.0); _ = square(2.0) }\n",
+            ),
+            (
+                "spm/Sources/Shapes/Square.swift",
+                "public func square(_ x: Double) -> Double { return x }\n\
+                 // Shadowed by the importer's own module.\n\
+                 public func describe(_ x: Double) -> String { return \"\" }\n",
+            ),
+            (
+                "spm/Sources/Other/Square.swift",
+                "public func square(_ x: Double) -> Double { return x }\n",
+            ),
+            ("ios/MyApp.xcodeproj/project.pbxproj", "// !$*UTF8*$!\n"),
+            (
+                "ios/MyApp/Model/Format.swift",
+                "func format(_ x: Int) -> String { return \"\" }\n",
+            ),
+            (
+                "ios/MyApp/Views/Screen.swift",
+                "func render() -> String { return format(1) }\n",
+            ),
+        ],
+        &[
+            "run -> describe @ spm/Sources/App/a/Report.swift",
+            "run -> square @ spm/Sources/Shapes/Square.swift",
+            "render -> format @ ios/MyApp/Model/Format.swift",
+        ],
+    );
+}
+
+/// No shared module without a manifest, across SPM targets without an
+/// import, or across unrelated packages / projects (#43).
+#[test]
+fn no_module_no_edge_swift() {
+    assert_no_cross_root_calls(&[
+        // No Package.swift / .xcodeproj: directories aren't modules.
+        ("loose/a/Report.swift", "func describe() {}\n"),
+        ("loose/b/App.swift", "func run() { describe() }\n"),
+        ("agent/Package.swift", "// swift-tools-version:5.9\n"),
+        (
+            "agent/Sources/Agent/Heartbeat.swift",
+            "func heartbeat() { post(); helper() }\n",
+        ),
+        ("agent/Sources/Util/Helper.swift", "func helper() {}\n"),
+        // Outside `Sources/<Target>/`: not part of any target.
+        ("agent/Scripts/Gen.swift", "func gen() { helper() }\n"),
+        ("frontend/Package.swift", "// swift-tools-version:5.9\n"),
+        ("frontend/Sources/Agent/Client.swift", "func post() {}\n"),
+        ("web/Web.xcodeproj/project.pbxproj", "// !$*UTF8*$!\n"),
+        ("web/Web/Client.swift", "func post() {}\nfunc helper() {}\n"),
+    ]);
+    let temp = index_project(&[
+        ("loose/a/Report.swift", "func describe() {}\n"),
+        ("loose/b/App.swift", "func run() { describe() }\n"),
+        ("agent/Package.swift", "// swift-tools-version:5.9\n"),
+        (
+            "agent/Sources/Agent/Heartbeat.swift",
+            "func heartbeat() { helper() }\n",
+        ),
+        ("agent/Sources/Util/Helper.swift", "func helper() {}\n"),
+        ("agent/Scripts/Gen.swift", "func gen() { helper() }\n"),
+    ]);
+    let calls = call_edges(temp.path());
+    assert!(calls.is_empty(), "{calls:#?}");
+}

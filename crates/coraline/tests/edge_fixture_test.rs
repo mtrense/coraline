@@ -156,6 +156,8 @@ const JAVA: Fixture = Fixture {
 const SWIFT: Fixture = Fixture {
     lang: "swift",
     files: &[
+        // An Xcode project makes the fixture one Swift module.
+        ("App.xcodeproj/project.pbxproj", "// !$*UTF8*$!\n"),
         (
             "a/Shapes.swift",
             "class Shape {\n\

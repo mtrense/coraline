@@ -3,6 +3,7 @@
 pub mod frameworks;
 mod import_path;
 pub(crate) mod receiver;
+mod swift_module;
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -40,7 +41,7 @@ impl ReferenceResolver {
         let mut resolved_ids = Vec::new();
 
         let mut imports_by_file: HashMap<String, Vec<FileImport>> = HashMap::new();
-        let mut packages = PackageIndex::default();
+        let mut packages = PackageIndex::new(project_root);
 
         for row in &unresolved {
             let reference = &row.reference;
@@ -397,7 +398,8 @@ fn rank_candidates(
     }
 
     // Names in scope without naming the callee: wildcard imports, C/C++
-    // includes, C# `using` namespaces, and the caller's own package.
+    // includes, C# `using` namespaces, Swift / Ruby imports, and the
+    // caller's own package / Swift module.
     let mut scope_targets: Vec<Target> = context
         .scope
         .iter()
@@ -413,6 +415,11 @@ fn rank_candidates(
                 score: SAME_PACKAGE_SCORE,
             }),
     );
+    if from_node.language == Language::Swift
+        && let Some(module) = packages.swift.module(&from_node.file_path)
+    {
+        scope_targets.push(Target::SwiftModule(module.clone()));
+    }
     let (scope_matches, others) = best_matches(conn, packages, others, &scope_targets)?;
     if !scope_matches.is_empty() {
         Ok(scope_matches)
@@ -493,6 +500,9 @@ fn export_candidates(
 const PACKAGE_SCORE: usize = 500;
 /// Score of a match through the caller's own package / namespace.
 const SAME_PACKAGE_SCORE: usize = 400;
+/// Score of a match in the caller's own Swift module: its declarations
+/// shadow those of imported modules.
+const SWIFT_MODULE_SCORE: usize = PACKAGE_SCORE + 10;
 
 /// An import node of the calling file.
 #[derive(Debug, Clone)]
@@ -531,11 +541,12 @@ impl FileImport {
 
     /// Imports that bring names into scope without binding the callee:
     /// wildcards (`app.a.*`, `from x import *`, `use a::*`, Go `.`), C/C++
-    /// includes, Ruby requires and C# `using` namespaces (not aliases).
+    /// includes, Ruby requires, Swift module imports and C# `using`
+    /// namespaces (not aliases).
     fn is_scope_import(&self) -> bool {
         match self.language {
             // `#include`, Ruby `require`: everything the file declares.
-            Language::C | Language::Cpp | Language::Ruby => true,
+            Language::C | Language::Cpp | Language::Ruby | Language::Swift => true,
             Language::CSharp => self.export_name.as_deref() == Some(self.local_name.as_str()),
             _ => matches!(self.local_name.as_str(), "*" | "."),
         }
@@ -602,8 +613,24 @@ impl FileImport {
         targets
     }
 
+    /// Swift `import Shapes` / `import Shapes.Sub`: the SPM target `Shapes`.
+    fn swift_import_target(&self) -> Target {
+        let name = self
+            .module_path
+            .split('.')
+            .next()
+            .unwrap_or(&self.module_path);
+        Target::SwiftImport {
+            target: name.to_string(),
+            importer: self.file_path.clone(),
+        }
+    }
+
     /// Where the callee of `q.name()` lives when this import binds `q`.
     fn qualifier_targets(&self) -> Vec<Target> {
+        if self.language == Language::Swift {
+            return vec![self.swift_import_target()];
+        }
         let mut targets = self.file_targets(self.item_name());
         targets.extend(self.package_item_target(PACKAGE_SCORE));
         // Namespace aliases: `using X = App.A;`, `use App\A;`
@@ -617,6 +644,9 @@ impl FileImport {
 
     /// Where an unqualified callee lives when this is a scope import.
     fn scope_targets(&self) -> Vec<Target> {
+        if self.language == Language::Swift {
+            return vec![self.swift_import_target()];
+        }
         let module_path = self
             .module_path
             .trim_end_matches('*')
@@ -664,6 +694,11 @@ enum Target {
         item: Option<String>,
         score: usize,
     },
+    /// Declarations in the caller's own Swift module.
+    SwiftModule(swift_module::SwiftModule),
+    /// Declarations in the SPM target a Swift file imports, preferably in
+    /// the importer's own package.
+    SwiftImport { target: String, importer: String },
 }
 
 impl Target {
@@ -693,6 +728,25 @@ impl Target {
                         .iter()
                         .any(|p| p == package))
                 .then_some(*score)
+            }
+            Self::SwiftModule(module) => (node.language == Language::Swift
+                && packages.swift.module(&node.file_path) == Some(module))
+            .then_some(SWIFT_MODULE_SCORE),
+            Self::SwiftImport { target, importer } => {
+                let importer_root = packages
+                    .swift
+                    .module(importer)
+                    .map(|module| module.root.clone());
+                match packages.swift.module(&node.file_path) {
+                    Some(module)
+                        if node.language == Language::Swift
+                            && module.target.as_deref() == Some(target.as_str()) =>
+                    {
+                        let same_package = importer_root.as_deref() == Some(module.root.as_str());
+                        Some(PACKAGE_SCORE + usize::from(same_package))
+                    }
+                    _ => None,
+                }
             }
         })
     }
@@ -729,13 +783,20 @@ fn normalize_package(path: &str) -> String {
 }
 
 /// Packages / namespaces declared per file (Kotlin / Java `package`, C# /
-/// PHP / C++ `namespace`), cached across references.
-#[derive(Default)]
+/// PHP / C++ `namespace`) and Swift modules, cached across references.
 struct PackageIndex {
     by_file: HashMap<String, Vec<String>>,
+    swift: swift_module::SwiftModules,
 }
 
 impl PackageIndex {
+    fn new(project_root: &Path) -> Self {
+        Self {
+            by_file: HashMap::new(),
+            swift: swift_module::SwiftModules::new(project_root),
+        }
+    }
+
     fn packages(
         &mut self,
         conn: &rusqlite::Connection,
