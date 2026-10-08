@@ -94,7 +94,8 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             &["name", "alias", "source"],
         ),
         Language::Python => (&[], &["name", "alias"]),
-        Language::Go => (&[], &["alias"]),
+        // go_import_symbols
+        Language::Go => (&["import_spec", "import_spec_list"], &["path", "name"]),
         Language::Java | Language::CSharp => (&["modifiers"], &[]),
         // kotlin_callee, import_module_path, kotlin_node_name
         Language::Kotlin => (
@@ -207,7 +208,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             &["field:callee", "kind:export_declaration"]
         }
-        Language::Go => &["field:import_spec"],
         Language::Rust => &["field:visibility_modifier", "kind:use_item"],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         _ => &[],

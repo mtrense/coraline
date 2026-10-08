@@ -1200,8 +1200,10 @@ fn add_import_nodes(
 }
 
 fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<ImportSymbol> {
-    if language == Language::Php {
-        return php_import_symbols(node, source);
+    match language {
+        Language::Php => return php_import_symbols(node, source),
+        Language::Go => return go_import_symbols(node, source),
+        _ => {}
     }
     let Some(module_path) = import_module_path(node, source, language) else {
         return Vec::new();
@@ -1267,28 +1269,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
                     export_name: None,
                 });
             }
-            imports
-        }
-
-        // === Go ===
-        Language::Go => {
-            let mut imports = Vec::new();
-            let alias = node
-                .child_by_field_name("alias")
-                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                .map(|s| s.to_string());
-
-            imports.push(ImportSymbol {
-                local_name: alias.clone().unwrap_or_else(|| {
-                    module_path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&module_path)
-                        .to_string()
-                }),
-                module_path,
-                export_name: alias,
-            });
             imports
         }
 
@@ -1395,6 +1375,46 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
     }
 }
 
+/// Imports of a Go `import_declaration`: a single `import_spec` or an
+/// `import_spec_list`. Each spec binds a package (not a symbol) under its
+/// optional `name` (alias, `_` or `.`), else the last path segment.
+fn go_import_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
+    let text = |n: TsNode| n.utf8_text(source.as_bytes()).ok().map(str::to_string);
+    let specs: Vec<TsNode> = match child_of_kind(node, "import_spec_list") {
+        Some(list) => list
+            .named_children(&mut list.walk())
+            .filter(|c| c.kind() == "import_spec")
+            .collect(),
+        None => child_of_kind(node, "import_spec").into_iter().collect(),
+    };
+
+    specs
+        .into_iter()
+        .filter_map(|spec| {
+            let raw = spec.child_by_field_name("path").and_then(text)?;
+            let module_path = raw.trim_matches(['"', '`'].as_ref()).trim().to_string();
+            if module_path.is_empty() {
+                return None;
+            }
+            let local_name = spec
+                .child_by_field_name("name")
+                .and_then(text)
+                .unwrap_or_else(|| {
+                    module_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&module_path)
+                        .to_string()
+                });
+            Some(ImportSymbol {
+                local_name,
+                module_path,
+                export_name: None,
+            })
+        })
+        .collect()
+}
+
 /// Imports of a PHP `namespace_use_declaration`: `use A\B;`,
 /// `use A\B as C, D\E;`, `use function A\f;` and group uses
 /// `use A\{B, C as D};` (prefix is a `namespace_name` child of the
@@ -1444,7 +1464,8 @@ fn import_path_field(language: Language) -> Option<&'static str> {
             Some("source")
         }
         Language::Python => Some("module_name"),
-        Language::Go => Some("import_spec"),
+        // Go `import_declaration` has no fields; see `go_import_symbols`.
+        Language::Go => None,
         Language::Java => Some("name"),
         Language::C | Language::Cpp => Some("path"),
         Language::CSharp => Some("qualified_name"),
