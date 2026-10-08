@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Kotlin and Swift files are indexed by default** — `**/*.kt`, `**/*.kts` and `**/*.swift` added to the default include patterns; `.kts` is detected as Kotlin. Files of unknown language are no longer indexed (they used to get a lone `file` node).
+- **Kotlin extraction** — calls, imports (incl. aliases and wildcards), properties, interfaces, enums and enum entries, packages, secondary constructors, companion objects and type aliases were missing because the extractor used node kinds / field names that don't exist in `tree-sitter-kotlin-ng`. Top-level non-`private` declarations are now emitted as implicit exports.
+- **Calls, imports and declarations in other languages** that were lost to wrong node kinds / field names: Java method calls and `new Foo()`; Swift calls, structs, enums and extensions; Ruby calls and `def self.x`; C/C++ functions, methods, namespaces and macros (previously no function nodes at all); PHP member / static / nullsafe calls and `use` imports; Go imports and call names (no more garbage names from func-literal callees); Rust `use` lists, `pub use` re-exports and macro calls; C# qualified, aliased, `static` and `global` using directives and `public` visibility; Python `from x import A, B` (only `A` was kept) and plain `import x`; JS/TS arrow functions and function expressions named after their variable (calls inside them had no scope).
+- **Blazor** (`.razor`) files are indexed at file level only. They were parsed with the C# grammar, which extracted nothing.
+
+### Removed
+
+- Extraction code and grammar crates for languages that were never enabled in `is_language_supported` (Bash, Dart, Elixir, Elm, Erlang, Fortran, Groovy, Haskell, Julia, Lua, MATLAB, Nix, Perl, PowerShell, R, Scala, Zig, TOML, YAML) and the unused `tree-sitter-blazor` dependency of `coraline`. Supported language count in the docs corrected from 33 to 17.
+
+### Testing
+
+- Grammar guard test: every node kind and field name in the extraction tables must exist in the language's tree-sitter grammar.
+- Per-language extraction tests (`tests/<lang>_extraction_test.rs`) and end-to-end edge fixture tests (`tests/edge_fixture_test.rs`) asserting stored `calls` / `imports` edges and `coraline_callers` / `coraline_callees` results for Kotlin, Java, Swift, Go, Python, TypeScript, C#, Rust, C/C++, Ruby and PHP.
+
 ## [0.13.1] - 2026-09-08
 
 Patch release. Re-issue of `0.13.0` plus six bug-fix commits

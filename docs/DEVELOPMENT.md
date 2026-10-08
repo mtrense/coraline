@@ -95,11 +95,12 @@ coraline/
 | `src/tools/memory_tools.rs` | 5 | Unit: MCP memory tools |
 | `src/memory.rs` | 11 | Unit: memory CRUD |
 | `src/vectors.rs` | 5 | Unit: cosine similarity |
-| `tests/extraction_test.rs` | 4 (1 ignored) | Integration: AST parsing |
+| `tests/extraction_test.rs` | 4 | Integration: AST parsing |
+| `src/extraction/grammar_guard_tests.rs` | - | Unit: every node kind / field name in the extraction tables exists in its tree-sitter grammar |
+| `tests/<lang>_extraction_test.rs` | - | Integration: per-language extraction (nodes, calls, imports), helpers in `tests/common/mod.rs` |
+| `tests/edge_fixture_test.rs` | 3 (3 ignored) | Integration: per-language multi-directory project, stored `Calls` / `Imports` edges + `coraline_callers` / `coraline_callees`; ignored tests hold cross-dir calls and Extends/Implements/Instantiates expectations not implemented yet |
 | `tests/graph_test.rs` | 4 | Integration: graph traversal |
 | `tests/context_test.rs` | 5 | Integration: context building |
-
-**Current status:** 37/37 passing, 1 ignored (`test_cross_file_references` — import edge extraction not yet implemented).
 
 ### Running Tests
 
@@ -133,12 +134,12 @@ Fixtures are small, self-contained codebases checked into the repo.
 
 ## Adding a New Tree-Sitter Language
 
-1. Add the tree-sitter crate to `crates/coraline/Cargo.toml`.
+1. Add the tree-sitter crate to `crates/coraline/Cargo.toml` and register it in `extraction.rs` (`language_to_parser`).
 2. Add the language variant to `Language` enum in `types.rs`.
-3. Add the file extension mapping in `extraction.rs` (`language_from_path`).
-4. Add an extraction branch in `extraction.rs` (`extract_nodes_from_ast`).
+3. Add the file extension mapping in `extraction.rs` (`detect_language`) and an include pattern in `config.rs` (`default_include_patterns`).
+4. Add the language to the extraction tables in `extraction.rs` (`node_kind_mappings`, `call_expression_kinds`, `call_name_fields`, `import_path_field`). Take node kinds and field names from the grammar's `src/node-types.json`; the grammar guard test (`src/extraction/grammar_guard_tests.rs`) fails on names the grammar doesn't have. List string literals used by language-specific helper code in `helper_names`.
 5. Add to the `is_language_supported` list in `config.rs`.
-6. Add at least one fixture file and a test case in `tests/extraction_test.rs`.
+6. Add `tests/<lang>_extraction_test.rs` and a fixture to `tests/edge_fixture_test.rs`.
 
 ---
 
