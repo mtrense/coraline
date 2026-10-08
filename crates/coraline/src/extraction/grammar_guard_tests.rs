@@ -144,7 +144,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         }
         Language::Go => &["field:import_spec"],
         Language::Rust => &["field:visibility_modifier", "kind:use_item"],
-        Language::Java => &["field:method"],
         Language::C => &["kind:preproc_define"],
         Language::Cpp => &[
             "kind:method_definition",

@@ -1842,8 +1842,8 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::Python => &["call"],
         // Go
         Language::Go => &["call_expression"],
-        // Java
-        Language::Java => &["method_invocation"],
+        // Java: method calls and `new Foo()` (recorded as a call to `Foo`)
+        Language::Java => &["method_invocation", "object_creation_expression"],
         // C/C++
         Language::C | Language::Cpp => &["call_expression"],
         // C#
@@ -1877,7 +1877,8 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         }
         Language::Python => &["function"],
         Language::Go => &["function"],
-        Language::Java => &["method"],
+        // `method_invocation` → `name`; `object_creation_expression` → `type`
+        Language::Java => &["name", "type"],
         Language::C | Language::Cpp => &["function"],
         Language::CSharp => &["function"],
         Language::Php => &["function"],
@@ -1906,13 +1907,17 @@ fn kotlin_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
 }
 
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
-    let callee = if language == Language::Kotlin {
+    let mut callee = if language == Language::Kotlin {
         kotlin_callee(node)?
     } else {
         call_name_fields(language)
             .iter()
             .find_map(|field| node.child_by_field_name(field))?
     };
+    // `new Foo<T>()`: drop the type arguments.
+    if language == Language::Java && callee.kind() == "generic_type" {
+        callee = callee.named_child(0)?;
+    }
 
     let raw = callee.utf8_text(source.as_bytes()).ok()?.to_string();
     let trimmed = raw.trim();
@@ -1996,6 +2001,7 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
         // === Java ===
         Language::Java => &[
             ("method_declaration", NodeKind::Method, false),
+            ("constructor_declaration", NodeKind::Method, false),
             ("class_declaration", NodeKind::Class, true),
             ("interface_declaration", NodeKind::Interface, true),
             ("enum_declaration", NodeKind::Enum, true),
