@@ -7,14 +7,8 @@
 //! failure.
 //!
 //! Checks are grammar-global: `field_id_for_name` only tells whether a field
-//! exists *somewhere* in the grammar, not on a specific node kind.
-//!
-//! `known_bad` is a temporary allowlist of names that are currently wrong. The
-//! test asserts the detected set equals the allowlist exactly, so:
-//! - fixing a mapping requires removing its entry from the allowlist, and
-//! - introducing a new bad name fails the test.
-//!
-//! Goal: shrink every allowlist entry to empty, then delete `known_bad`.
+//! exists *somewhere* in the grammar, not on a specific node kind, so per-node
+//! field mistakes need fixture tests (`tests/<lang>_extraction_test.rs`).
 
 use std::collections::BTreeSet;
 
@@ -238,13 +232,6 @@ fn grammar_group(language: Language) -> Vec<Language> {
     }
 }
 
-/// Temporary allowlist of names known not to exist in the grammar.
-/// Entries are `"kind:<name>"` or `"field:<name>"`. Remove entries as the
-/// corresponding mappings get fixed (see plan §2/§3).
-const fn known_bad(_language: Language) -> &'static [&'static str] {
-    &[]
-}
-
 fn bad_names(language: Language) -> BTreeSet<String> {
     let grammars: Vec<tree_sitter::Language> = grammar_group(language)
         .into_iter()
@@ -296,22 +283,10 @@ fn extraction_names_exist_in_grammars() {
             continue;
         }
 
-        let actual = bad_names(language);
-        let allowed: BTreeSet<String> = known_bad(language)
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-
-        let new_bad: Vec<_> = actual.difference(&allowed).collect();
-        let fixed: Vec<_> = allowed.difference(&actual).collect();
-        if !new_bad.is_empty() {
+        let bad = bad_names(language);
+        if !bad.is_empty() {
             failures.push(format!(
-                "{language:?}: names missing from grammar (fix the mapping): {new_bad:?}"
-            ));
-        }
-        if !fixed.is_empty() {
-            failures.push(format!(
-                "{language:?}: allowlisted names now valid or unused (remove from known_bad): {fixed:?}"
+                "{language:?}: names missing from grammar (fix the mapping): {bad:?}"
             ));
         }
     }
