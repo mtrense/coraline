@@ -1241,15 +1241,30 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
             }]
         }
 
-        // === Kotlin ===
+        // === Kotlin: `import a.b.C`, `import a.b.C as D`, `import a.b.*` ===
         Language::Kotlin => {
+            let mut cursor = node.walk();
+            let children: Vec<TsNode> = node.children(&mut cursor).collect();
+            if children.iter().any(|c| c.kind() == "*") {
+                return vec![ImportSymbol {
+                    local_name: "*".to_string(),
+                    module_path,
+                    export_name: None,
+                }];
+            }
+
             let last_part = module_path
                 .rsplit('.')
                 .next()
                 .unwrap_or(&module_path)
                 .to_string();
+            let alias = children
+                .iter()
+                .find(|c| c.kind() == "identifier")
+                .and_then(|c| c.utf8_text(source.as_bytes()).ok())
+                .map(|s| s.to_string());
             vec![ImportSymbol {
-                local_name: last_part.clone(),
+                local_name: alias.unwrap_or_else(|| last_part.clone()),
                 module_path,
                 export_name: Some(last_part),
             }]

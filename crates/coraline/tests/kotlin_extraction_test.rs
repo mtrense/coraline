@@ -125,3 +125,31 @@ fn kotlin_imports_are_extracted() {
         &["Main.kt -> Circle", "Main.kt -> Point"],
     );
 }
+
+#[test]
+fn kotlin_import_paths_handle_alias_and_wildcard() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "package com.example.app\n\
+         \n\
+         import com.example.model.Circle\n\
+         import com.example.model.format as fmt\n\
+         import com.example.util.*\n\
+         \n\
+         fun main() {}\n",
+    )]);
+
+    let imports = query_set(
+        temp.path(),
+        "SELECT name || ' | ' || signature FROM nodes WHERE kind = 'import'",
+    );
+    let expected: BTreeSet<String> = [
+        "Circle | com.example.model.Circle|export=Circle",
+        "fmt | com.example.model.format|export=format",
+        "* | com.example.util",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    assert_eq!(imports, expected);
+}
