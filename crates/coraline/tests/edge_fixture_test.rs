@@ -740,8 +740,17 @@ fn check_all(check: impl Fn(&Fixture, &Path) -> Vec<String>) {
 
 /// Names returned by `coraline_callers` / `coraline_callees` under `key`.
 fn tool_names(project_path: &Path, tool: &str, key: &str, node_id: &str) -> BTreeSet<String> {
+    tool_names_with(
+        project_path,
+        tool,
+        key,
+        json!({ "node_id": node_id, "limit": 50 }),
+    )
+}
+
+fn tool_names_with(project_path: &Path, tool: &str, key: &str, params: Value) -> BTreeSet<String> {
     let output = tools::create_default_registry(project_path)
-        .execute(tool, json!({ "node_id": node_id, "limit": 50 }))
+        .execute(tool, params)
         .expect("tool call failed");
     output
         .get(key)
@@ -839,6 +848,61 @@ fn inheritance_edges_are_stored() {
             &actual,
             fixture.inherits,
         )
+    });
+}
+
+/// `coraline_callers` / `coraline_find_references` filtered by
+/// `edge_kind` return exactly the sources of the stored edges of that kind.
+#[test]
+fn type_edges_are_retrievable_by_edge_kind() {
+    check_all(|fixture, path| {
+        let conn = coraline::db::open_database(path).expect("Failed to open database");
+        let mut failures = Vec::new();
+        let expectations = fixture
+            .inherits
+            .iter()
+            .map(|pair| (pair, ("extends", "implements")))
+            .chain(
+                fixture
+                    .instantiates
+                    .iter()
+                    .map(|pair| (pair, ("instantiates", "instantiates"))),
+            );
+        for (pair, (kind_a, kind_b)) in expectations {
+            let (source_name, target_name) = pair.split_once(" -> ").expect("pair format");
+            let found: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT e.target, e.kind FROM edges e
+                       JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+                      WHERE s.name = ?1 AND t.name = ?2 AND e.kind IN (?3, ?4)",
+                    [source_name, target_name, kind_a, kind_b],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .ok();
+            let Some((target, kind)) = found else {
+                failures.push(format!("{}: no edge `{pair}`", fixture.lang));
+                continue;
+            };
+            let expected = BTreeSet::from([source_name.to_string()]);
+            for (tool, key) in [
+                ("coraline_callers", "callers"),
+                ("coraline_find_references", "references"),
+            ] {
+                let names = tool_names_with(
+                    path,
+                    tool,
+                    key,
+                    json!({ "node_id": target, "edge_kind": kind, "limit": 50 }),
+                );
+                if names != expected {
+                    failures.push(format!(
+                        "{}: {tool} {kind} of {target_name}: {names:?}, expected {expected:?}",
+                        fixture.lang
+                    ));
+                }
+            }
+        }
+        failures
     });
 }
 

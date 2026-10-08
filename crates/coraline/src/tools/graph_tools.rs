@@ -14,6 +14,31 @@ use crate::utils::f64_to_f32_lossy;
 
 use super::{Tool, ToolError, ToolResult};
 
+/// Values of the `edge_kind` filter of `coraline_callers`,
+/// `coraline_callees` and `coraline_find_references`.
+const EDGE_KIND_FILTERS: [&str; 6] = [
+    "calls",
+    "imports",
+    "extends",
+    "implements",
+    "instantiates",
+    "references",
+];
+
+/// Edge kind named by an `edge_kind` filter value; `None` for unknown
+/// values (no filter).
+fn parse_edge_kind_filter(value: &str) -> Option<EdgeKind> {
+    match value {
+        "calls" => Some(EdgeKind::Calls),
+        "imports" => Some(EdgeKind::Imports),
+        "extends" => Some(EdgeKind::Extends),
+        "implements" => Some(EdgeKind::Implements),
+        "instantiates" => Some(EdgeKind::Instantiates),
+        "references" => Some(EdgeKind::References),
+        _ => None,
+    }
+}
+
 /// Tool for searching nodes by name or pattern
 pub struct SearchTool {
     project_root: PathBuf,
@@ -150,7 +175,8 @@ impl Tool for CallersTool {
          - Find all callers: {\"node_id\": \"my_function\"}\n\
          - Find only direct calls: {\"node_id\": \"my_function\", \"edge_kind\": \"calls\"}\n\
          - Find classes extending: {\"node_id\": \"MyClass\", \"edge_kind\": \"extends\"}\n\
-         - Find implementers: {\"node_id\": \"MyInterface\", \"edge_kind\": \"implements\"}"
+         - Find implementers: {\"node_id\": \"MyInterface\", \"edge_kind\": \"implements\"}\n\
+         - Find constructions: {\"node_id\": \"MyClass\", \"edge_kind\": \"instantiates\"}"
     }
 
     fn input_schema(&self) -> Value {
@@ -163,8 +189,8 @@ impl Tool for CallersTool {
                 },
                 "edge_kind": {
                     "type": "string",
-                    "description": "Filter by edge kind (calls, imports, extends, implements, references)",
-                    "enum": ["calls", "imports", "extends", "implements", "references"]
+                    "description": "Filter by edge kind (calls, imports, extends, implements, instantiates, references)",
+                    "enum": EDGE_KIND_FILTERS
                 },
                 "limit": {
                     "type": "number",
@@ -195,18 +221,10 @@ impl Tool for CallersTool {
             .and_then(Value::as_str)
             .ok_or_else(|| ToolError::invalid_params("node_id must be a string"))?;
 
-        let edge_kind =
-            params
-                .get("edge_kind")
-                .and_then(Value::as_str)
-                .map_or(Some(EdgeKind::Calls), |s| match s {
-                    "calls" => Some(EdgeKind::Calls),
-                    "imports" => Some(EdgeKind::Imports),
-                    "extends" => Some(EdgeKind::Extends),
-                    "implements" => Some(EdgeKind::Implements),
-                    "references" => Some(EdgeKind::References),
-                    _ => None,
-                });
+        let edge_kind = params
+            .get("edge_kind")
+            .and_then(Value::as_str)
+            .map_or(Some(EdgeKind::Calls), parse_edge_kind_filter);
 
         let limit = usize::try_from(params.get("limit").and_then(Value::as_u64).unwrap_or(20))
             .unwrap_or(usize::MAX);
@@ -306,8 +324,8 @@ impl Tool for CalleesTool {
                 },
                 "edge_kind": {
                     "type": "string",
-                    "description": "Filter by edge kind (calls, imports, extends, implements, references)",
-                    "enum": ["calls", "imports", "extends", "implements", "references"]
+                    "description": "Filter by edge kind (calls, imports, extends, implements, instantiates, references)",
+                    "enum": EDGE_KIND_FILTERS
                 },
                 "limit": {
                     "type": "number",
@@ -338,18 +356,10 @@ impl Tool for CalleesTool {
             .and_then(Value::as_str)
             .ok_or_else(|| ToolError::invalid_params("node_id must be a string"))?;
 
-        let edge_kind =
-            params
-                .get("edge_kind")
-                .and_then(Value::as_str)
-                .map_or(Some(EdgeKind::Calls), |s| match s {
-                    "calls" => Some(EdgeKind::Calls),
-                    "imports" => Some(EdgeKind::Imports),
-                    "extends" => Some(EdgeKind::Extends),
-                    "implements" => Some(EdgeKind::Implements),
-                    "references" => Some(EdgeKind::References),
-                    _ => None,
-                });
+        let edge_kind = params
+            .get("edge_kind")
+            .and_then(Value::as_str)
+            .map_or(Some(EdgeKind::Calls), parse_edge_kind_filter);
 
         let limit = usize::try_from(params.get("limit").and_then(Value::as_u64).unwrap_or(20))
             .unwrap_or(usize::MAX);
@@ -777,8 +787,8 @@ impl Tool for FindReferencesTool {
                 },
                 "edge_kind": {
                     "type": "string",
-                    "description": "Filter by edge kind (calls, imports, extends, implements, references)",
-                    "enum": ["calls", "imports", "extends", "implements", "references"]
+                    "description": "Filter by edge kind (calls, imports, extends, implements, instantiates, references)",
+                    "enum": EDGE_KIND_FILTERS
                 },
                 "limit": {
                     "type": "number",
@@ -806,14 +816,7 @@ impl Tool for FindReferencesTool {
         let edge_kind = params
             .get("edge_kind")
             .and_then(Value::as_str)
-            .and_then(|s| match s {
-                "calls" => Some(EdgeKind::Calls),
-                "imports" => Some(EdgeKind::Imports),
-                "extends" => Some(EdgeKind::Extends),
-                "implements" => Some(EdgeKind::Implements),
-                "references" => Some(EdgeKind::References),
-                _ => None,
-            });
+            .and_then(parse_edge_kind_filter);
 
         let limit = usize::try_from(params.get("limit").and_then(Value::as_u64).unwrap_or(50))
             .unwrap_or(usize::MAX);
