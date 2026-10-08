@@ -981,3 +981,153 @@ fn qualified_calls_resolve_to_their_own_type() {
         ],
     );
 }
+
+/// `caller -> callee_qualified_name conf` for every stored calls edge.
+fn call_targets(project_path: &Path) -> BTreeSet<String> {
+    query_set(
+        project_path,
+        "SELECT s.name || ' -> ' || replace(t.qualified_name, '\\', '/') || ' '
+                || printf('%.2f', e.confidence)
+           FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'calls'",
+    )
+}
+
+fn targets_of<'a>(calls: &'a BTreeSet<String>, caller: &str) -> Vec<&'a str> {
+    let prefix = format!("{caller} -> ");
+    calls
+        .iter()
+        .filter(|call| call.starts_with(&prefix))
+        .map(String::as_str)
+        .collect()
+}
+
+/// Same-named methods in one file: the caller's own class wins for
+/// unqualified and `this` calls, the named type for `Type.m()`.
+#[test]
+fn same_named_methods_resolve_by_class() {
+    let temp = index_project(&[
+        (
+            "j/Shapes.java",
+            "class Circle {\n\
+             \x20   double area() { return scale(); }\n\
+             \x20   double perimeter() { return this.scale(); }\n\
+             \x20   double scale() { return 1.0; }\n\
+             \x20   static Circle create() { return null; }\n\
+             }\n\
+             class Square {\n\
+             \x20   double scale() { return 2.0; }\n\
+             \x20   static Square create() { return null; }\n\
+             \x20   static void build() { Circle.create(); }\n\
+             }\n",
+        ),
+        (
+            "k/Shapes.kt",
+            "class Circle {\n\
+             \x20   fun area(): Double = scale()\n\
+             \x20   fun scale(): Double = 1.0\n\
+             \x20   companion object {\n\
+             \x20       fun create(): Circle = Circle()\n\
+             \x20   }\n\
+             }\n\
+             class Square {\n\
+             \x20   fun scale(): Double = 2.0\n\
+             \x20   companion object {\n\
+             \x20       fun create(): Square = Square()\n\
+             \x20   }\n\
+             }\n\
+             fun build() { Square.create() }\n",
+        ),
+    ]);
+    let calls = call_targets(temp.path());
+    for (caller, expected) in [
+        (
+            "area",
+            vec![
+                "area -> j/Shapes.java::Circle::scale 0.50",
+                "area -> k/Shapes.kt::Circle::scale 0.50",
+            ],
+        ),
+        (
+            "perimeter",
+            vec!["perimeter -> j/Shapes.java::Circle::scale 0.50"],
+        ),
+        (
+            "build",
+            vec![
+                "build -> j/Shapes.java::Circle::create 1.00",
+                "build -> k/Shapes.kt::Square::Companion::create 1.00",
+            ],
+        ),
+    ] {
+        assert_eq!(targets_of(&calls, caller), expected, "{calls:#?}");
+    }
+}
+
+/// Overloads of one method all get an edge; calls on receivers of unknown
+/// type with a few same-file candidates get low-confidence edges to each,
+/// but never to candidates outside the import / file / dir / package tiers.
+#[test]
+fn ambiguous_calls_link_every_candidate_with_lower_confidence() {
+    let temp = index_project(&[
+        (
+            "src/main/java/app/util/Util.java",
+            "package app.util;\n\n\
+             public class Util {\n\
+             \x20   public static String format(int x) { return \"\"; }\n\
+             \x20   public static String format(String s) { return s; }\n\
+             }\n",
+        ),
+        (
+            "src/main/java/app/App.java",
+            "package app;\n\n\
+             import app.util.Util;\n\n\
+             class App {\n\
+             \x20   String render() { return Util.format(1); }\n\
+             }\n",
+        ),
+        (
+            "py/shapes.py",
+            "class Circle:\n    def area(self):\n        return 1\n\n\
+             class Square:\n    def area(self):\n        return 2\n\n\
+             def total(shape):\n    return shape.area()\n",
+        ),
+        (
+            "other/sizes.py",
+            "class Disc:\n    def area(self):\n        return 3\n",
+        ),
+        (
+            "third/report.py",
+            "def summary(shape):\n    return shape.area()\n",
+        ),
+    ]);
+    let calls = call_targets(temp.path());
+    let render = targets_of(&calls, "render");
+    assert_eq!(
+        render.len(),
+        1,
+        "both overloads share a qualified name: {calls:#?}"
+    );
+    let overloads = query_set(
+        temp.path(),
+        "SELECT t.id || ' ' || printf('%.2f', e.confidence) FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'calls' AND s.name = 'render'",
+    );
+    assert_eq!(overloads.len(), 2, "{overloads:#?}");
+    assert!(
+        overloads.iter().all(|o| o.ends_with(" 0.50")),
+        "{overloads:#?}"
+    );
+    assert_eq!(
+        targets_of(&calls, "total"),
+        vec![
+            "total -> py/shapes.py::Circle::area 0.30",
+            "total -> py/shapes.py::Square::area 0.30",
+        ],
+        "{calls:#?}"
+    );
+    // Ambiguity never widens the search: no import, no same dir → no edge.
+    assert!(targets_of(&calls, "summary").is_empty(), "{calls:#?}");
+}

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::db;
 use crate::types::Node;
-use crate::types::{Edge, EdgeKind, Language, NodeKind};
+use crate::types::{Edge, EdgeKind, Language, NodeKind, UnresolvedReference};
 
 #[derive(Debug, Default)]
 pub struct ReferenceResolver;
@@ -94,27 +94,19 @@ impl ReferenceResolver {
                 reference.reference_kind,
             )?;
 
+            let mut edges = reference_edges(reference, candidates, from_node.as_ref());
             // If generic resolution found nothing, try framework-specific hints.
-            let candidates = if candidates.is_empty() {
-                from_node.as_ref().map_or_else(Vec::new, |from| {
-                    framework_fallback(conn, project_root, from, &reference.reference_name)
-                })
-            } else {
-                candidates
-            };
-
-            if let [target] = candidates.as_slice() {
-                let confidence = confidence_for_reference(&reference.reference_name);
-                resolved_edges.push(Edge {
-                    source: reference.from_node_id.clone(),
-                    target: target.id.clone(),
-                    kind: reference.reference_kind,
-                    metadata: None,
-                    line: Some(reference.line),
-                    column: Some(reference.column),
-                    confidence,
-                    process_id: None,
-                });
+            if edges.is_empty()
+                && let Some(from) = &from_node
+            {
+                let fallback =
+                    framework_fallback(conn, project_root, from, &reference.reference_name);
+                if fallback.len() == 1 {
+                    edges = reference_edges(reference, fallback, None);
+                }
+            }
+            if !edges.is_empty() {
+                resolved_edges.append(&mut edges);
                 resolved_ids.push(row.id);
             }
         }
@@ -155,6 +147,108 @@ fn confidence_for_reference(name: &str) -> f32 {
     } else {
         0.5
     }
+}
+
+/// Edges for `reference` to its ranked `candidates`: exactly one target, or
+/// for calls the targets picked by [`call_targets`].
+fn reference_edges(
+    reference: &UnresolvedReference,
+    candidates: Vec<Node>,
+    from_node: Option<&Node>,
+) -> Vec<Edge> {
+    let confidence = confidence_for_reference(&reference.reference_name);
+    let (targets, confidence) = if reference.reference_kind == EdgeKind::Calls {
+        call_targets(
+            candidates,
+            from_node,
+            reference.qualifier.as_deref(),
+            confidence,
+        )
+    } else if candidates.len() == 1 {
+        (candidates, confidence)
+    } else {
+        (Vec::new(), confidence)
+    };
+    targets
+        .into_iter()
+        .map(|target| Edge {
+            source: reference.from_node_id.clone(),
+            target: target.id,
+            kind: reference.reference_kind,
+            metadata: None,
+            line: Some(reference.line),
+            column: Some(reference.column),
+            confidence,
+            process_id: None,
+        })
+        .collect()
+}
+
+/// Most equally ranked call targets linked at once; more means the name
+/// is too common to guess.
+const MAX_AMBIGUOUS_TARGETS: usize = 3;
+/// Confidence of each edge of a call linked to several candidates of
+/// different types (`shape.area()` with `Circle.area` and `Square.area`).
+const AMBIGUOUS_CONFIDENCE: f32 = 0.3;
+
+/// Which of the ranked `candidates` a call links to, and with what
+/// confidence (`confidence` for a unique target).
+///
+/// Same-named candidates are narrowed by receiver: `Type.m()` → members of
+/// `Type`; unqualified and `this.m()` → the caller's own type. Overloads
+/// (one type, one name) all get an edge with `confidence`; a few remaining
+/// candidates of different types get [`AMBIGUOUS_CONFIDENCE`] each. The
+/// candidates come from import / same-file / same-dir / package tiers only,
+/// so this never links unrelated projects (#43).
+fn call_targets(
+    candidates: Vec<Node>,
+    from_node: Option<&Node>,
+    qualifier: Option<&str>,
+    confidence: f32,
+) -> (Vec<Node>, f32) {
+    let targets = narrow_by_receiver(candidates, from_node, qualifier);
+    let overloads = targets.windows(2).all(|pair| {
+        let [a, b] = pair else { return true };
+        a.file_path == b.file_path && containers(a) == containers(b)
+    });
+    if overloads {
+        (targets, confidence)
+    } else if targets.len() <= MAX_AMBIGUOUS_TARGETS {
+        (targets, AMBIGUOUS_CONFIDENCE.min(confidence))
+    } else {
+        (Vec::new(), 0.0)
+    }
+}
+
+fn narrow_by_receiver(
+    candidates: Vec<Node>,
+    from_node: Option<&Node>,
+    qualifier: Option<&str>,
+) -> Vec<Node> {
+    if candidates.len() < 2 {
+        return candidates;
+    }
+    let preferred: Vec<&Node> = match qualifier {
+        Some(qualifier) if !receiver::is_self_like(receiver::last_segment(qualifier)) => candidates
+            .iter()
+            .filter(|node| receiver::names_container(qualifier, &containers(node)))
+            .collect(),
+        _ => from_node.map_or_else(Vec::new, |from| {
+            let own = containers(from);
+            candidates
+                .iter()
+                .filter(|node| node.file_path == from.file_path && containers(node) == own)
+                .collect()
+        }),
+    };
+    if preferred.is_empty() || preferred.len() == candidates.len() {
+        return candidates;
+    }
+    let preferred: HashSet<String> = preferred.into_iter().map(|node| node.id.clone()).collect();
+    candidates
+        .into_iter()
+        .filter(|node| preferred.contains(&node.id))
+        .collect()
 }
 
 fn nodes_from_ids(conn: &rusqlite::Connection, ids: &[String]) -> Vec<Node> {
