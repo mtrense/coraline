@@ -1856,8 +1856,10 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::CSharp => &["invocation_expression"],
         // PHP
         Language::Php => &["function_call_expression", "member_call_expression"],
-        // Ruby
-        Language::Ruby => &["method_call"],
+        // Ruby: `call` covers `recv.m(...)`, `m(...)` and `Foo.new` (recorded
+        // as a call to `Foo`). Bare `m` without receiver or parentheses is an
+        // `identifier`, indistinguishable from a local variable, and is skipped.
+        Language::Ruby => &["call"],
         // Swift: calls and `Foo<T>()` (recorded as a call to `Foo`)
         Language::Swift => &["call_expression", "constructor_expression"],
         // Kotlin
@@ -1936,10 +1938,27 @@ fn swift_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
     }
 }
 
+/// Callee of a Ruby `call`: its `method`, except `Foo.new` / `A::Foo.new`,
+/// which is recorded as a call to the class `Foo`.
+fn ruby_callee<'tree>(node: &TsNode<'tree>, source: &str) -> Option<TsNode<'tree>> {
+    let method = node.child_by_field_name("method")?;
+    if method.utf8_text(source.as_bytes()) == Ok("new") {
+        if let Some(receiver) = node.child_by_field_name("receiver") {
+            match receiver.kind() {
+                "constant" => return Some(receiver),
+                "scope_resolution" => return receiver.child_by_field_name("name"),
+                _ => {}
+            }
+        }
+    }
+    Some(method)
+}
+
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
     let mut callee = match language {
         Language::Kotlin => kotlin_callee(node)?,
         Language::Swift => swift_callee(node)?,
+        Language::Ruby => ruby_callee(node, source)?,
         _ => call_name_fields(language)
             .iter()
             .find_map(|field| node.child_by_field_name(field))?,
@@ -2096,7 +2115,7 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
         // === Ruby ===
         Language::Ruby => &[
             ("method", NodeKind::Method, false),
-            ("def", NodeKind::Function, false),
+            ("singleton_method", NodeKind::Method, false),
             ("class", NodeKind::Class, true),
             ("module", NodeKind::Namespace, true),
             ("assignment", NodeKind::Variable, false),

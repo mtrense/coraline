@@ -132,6 +132,11 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["constructed_type", "suffix", "declaration_kind"],
         ),
+        // ruby_callee
+        Language::Ruby => (
+            &["constant", "scope_resolution"],
+            &["method", "receiver", "name"],
+        ),
         _ => (&[], &[]),
     }
 }
@@ -165,7 +170,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
             "kind:preproc_define",
         ],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
-        Language::Ruby => &["kind:def", "kind:method_call"],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
         Language::Blazor => &[
             "kind:component_definition",
