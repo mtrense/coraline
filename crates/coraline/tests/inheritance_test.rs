@@ -267,6 +267,41 @@ fn cpp_base_class_clause() {
     );
 }
 
+/// `impl Trait for Type` with `Type` declared in the same file.
+#[test]
+fn rust_trait_impls() {
+    assert_inheritance(
+        &[
+            (
+                "src/shapes.rs",
+                "pub trait Shape {\n    fn area(&self) -> f64;\n}\n",
+            ),
+            (
+                "src/circle.rs",
+                "use crate::shapes::Shape;\n\
+                 \n\
+                 pub struct Circle;\n\
+                 \n\
+                 impl Circle {}\n\
+                 \n\
+                 impl Shape for Circle {\n\
+                 \x20   fn area(&self) -> f64 { 1.0 }\n\
+                 }\n\
+                 \n\
+                 impl std::fmt::Debug for Circle {\n\
+                 \x20   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }\n\
+                 }\n\
+                 \n\
+                 impl<T> Shape for Vec<T> {\n\
+                 \x20   fn area(&self) -> f64 { 0.0 }\n\
+                 }\n",
+            ),
+        ],
+        &[],
+        &["Circle -> Shape"],
+    );
+}
+
 /// Like calls (#43): a supertype in an unrelated directory with no import /
 /// package link is not linked by name alone.
 #[test]

@@ -119,6 +119,28 @@ pub(super) fn supertype_refs<'tree>(
         .collect()
 }
 
+/// Rust `impl Trait for Type`: the implementing type's name and an
+/// `Implements` ref to the trait. Inherent impls (`impl Type`) have none.
+pub(super) fn rust_trait_impl<'tree>(
+    node: &TsNode<'tree>,
+    source: &str,
+) -> Option<(String, TypeRef<'tree>)> {
+    if node.kind() != "impl_item" {
+        return None;
+    }
+    let trait_ref = type_ref(
+        node.child_by_field_name("trait")?,
+        source,
+        EdgeKind::Implements,
+    )?;
+    let self_type = node
+        .child_by_field_name("type")?
+        .utf8_text(source.as_bytes())
+        .ok()?;
+    let (self_name, _) = split_type_name(self_type)?;
+    Some((self_name, trait_ref))
+}
+
 /// Type named by a Kotlin `delegation_specifier`: `Base(1)`
 /// (`constructor_invocation`), `I` (`user_type`) or `I by impl`
 /// (`explicit_delegation`). Function types have no name.

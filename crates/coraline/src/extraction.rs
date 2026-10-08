@@ -955,6 +955,19 @@ fn walk_tree_calls(
         }
         scope_stack.push(id);
     }
+    // `impl Trait for Type`: only for a `Type` declared in this file; impls
+    // elsewhere in the crate would need a crate-wide type lookup.
+    if language == Language::Rust {
+        if let Some((self_name, trait_ref)) = type_refs::rust_trait_impl(&node, source) {
+            if let Some([self_id]) = symbol_index
+                .types_by_name
+                .get(&self_name)
+                .map(Vec::as_slice)
+            {
+                unresolved_refs.push(type_reference(self_id, trait_ref));
+            }
+        }
+    }
 
     // Ruby `require` calls are imports.
     if kind != Some(NodeKind::Import) && is_call_expression(node.kind(), language) {

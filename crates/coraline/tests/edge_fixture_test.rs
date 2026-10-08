@@ -11,11 +11,11 @@
 //! - `b/app`: imports from `a`; `main` calls the same-file `run`; `run` calls
 //!   `describe` (cross-dir) and constructs a `Circle`.
 //!
-//! Asserted: same-file / same-dir calls, imports and import- / package- /
-//! module-backed cross-dir calls. Inheritance / instantiation edges
-//! (`inherits`, `instantiates`) are recorded per fixture and asserted by
-//! the `#[ignore]`d tests at the bottom; remove the `#[ignore]` once they
-//! are extracted.
+//! Asserted: same-file / same-dir calls, imports, import- / package- /
+//! module-backed cross-dir calls and extends / implements edges.
+//! Instantiation edges (`instantiates`) are recorded per fixture and
+//! asserted by the `#[ignore]`d test at the bottom; remove the `#[ignore]`
+//! once they are extracted.
 #![allow(clippy::expect_used)]
 
 mod common;
@@ -829,7 +829,6 @@ fn cross_dir_calls_are_stored() {
 }
 
 #[test]
-#[ignore = "PR 3: no Extends/Implements extraction yet (plan §4)"]
 fn inheritance_edges_are_stored() {
     check_all(|fixture, path| {
         let mut actual = edge_pairs(path, "extends");

@@ -73,8 +73,10 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "scoped_use_list",
                 "use_wildcard",
                 "use_as_clause",
+                // type_refs::rust_trait_impl
+                "impl_item",
             ],
-            &["argument", "list", "alias", "path", "name"],
+            &["argument", "list", "alias", "path", "name", "trait", "type"],
         ),
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => (
             &[
