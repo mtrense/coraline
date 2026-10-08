@@ -116,7 +116,19 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["path", "name", "field", "operand", "type"],
         ),
-        Language::Java | Language::CSharp => (&["modifiers"], &[]),
+        // read_declaration_visibility
+        Language::Java => (&["modifiers"], &[]),
+        // read_declaration_visibility, csharp_using_symbols
+        Language::CSharp => (
+            &[
+                "modifier",
+                "identifier",
+                "qualified_name",
+                "generic_name",
+                "alias_qualified_name",
+            ],
+            &["name"],
+        ),
         // kotlin_callee, import_module_path, kotlin_node_name
         Language::Kotlin => (
             &[
@@ -228,7 +240,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             &["field:callee", "kind:export_declaration"]
         }
-        Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         _ => &[],
     }
 }

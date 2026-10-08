@@ -681,10 +681,12 @@ fn read_declaration_visibility(
                 current = parent;
             }
         }
+        // Java wraps modifiers in a `modifiers` node; C# has one `modifier`
+        // child per keyword.
         Language::Java | Language::CSharp => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if child.kind() == "modifiers" {
+                if matches!(child.kind(), "modifiers" | "modifier") {
                     let text = child.utf8_text(source.as_bytes()).ok()?;
                     if text.contains("public") {
                         return Some((Visibility::Public, true));
@@ -1211,6 +1213,7 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
         Language::Php => return php_import_symbols(node, source),
         Language::Go => return go_import_symbols(node, source),
         Language::Rust => return rust_use_symbols(node, source),
+        Language::CSharp => return csharp_using_symbols(node, source).into_iter().collect(),
         _ => {}
     }
     let Some(module_path) = import_module_path(node, source, language) else {
@@ -1287,21 +1290,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
                 .next_back()
                 .unwrap_or(&module_path)
                 .to_string();
-            vec![ImportSymbol {
-                local_name: name.clone(),
-                module_path,
-                export_name: Some(name),
-            }]
-        }
-
-        // === C# ===
-        Language::CSharp => {
-            let last_dot = module_path.rfind('.').unwrap_or(0);
-            let name = if last_dot > 0 {
-                module_path[last_dot + 1..].to_string()
-            } else {
-                module_path.clone()
-            };
             vec![ImportSymbol {
                 local_name: name.clone(),
                 module_path,
@@ -1453,6 +1441,39 @@ fn collect_rust_use(node: TsNode, source: &str, prefix: &str, imports: &mut Vec<
     }
 }
 
+/// Import of a C# `using_directive`: `using A.B;`, `using static A.B;`,
+/// `global using A.B;` and aliases `using X = A.B<T>;`. The `name` field is
+/// the alias; the imported namespace/type is the remaining name child.
+fn csharp_using_symbols(node: &TsNode, source: &str) -> Option<ImportSymbol> {
+    let text = |n: TsNode| n.utf8_text(source.as_bytes()).ok().map(str::to_string);
+    let alias = node.child_by_field_name("name");
+    let target = node.named_children(&mut node.walk()).find(|c| {
+        Some(*c) != alias
+            && matches!(
+                c.kind(),
+                "identifier" | "qualified_name" | "generic_name" | "alias_qualified_name"
+            )
+    })?;
+    let module_path = text(target)?;
+    // Last segment without type arguments: `A.B.List<int>` → `List`.
+    let last_part = module_path
+        .split('<')
+        .next()
+        .unwrap_or(&module_path)
+        .rsplit(['.', ':'])
+        .next()
+        .unwrap_or(&module_path)
+        .to_string();
+    if last_part.is_empty() {
+        return None;
+    }
+    Some(ImportSymbol {
+        local_name: alias.and_then(text).unwrap_or_else(|| last_part.clone()),
+        module_path,
+        export_name: Some(last_part),
+    })
+}
+
 /// Imports of a Go `import_declaration`: a single `import_spec` or an
 /// `import_spec_list`. Each spec binds a package (not a symbol) under its
 /// optional `name` (alias, `_` or `.`), else the last path segment.
@@ -1547,7 +1568,8 @@ fn import_path_field(language: Language) -> Option<&'static str> {
         Language::Go => None,
         Language::Java => Some("name"),
         Language::C | Language::Cpp => Some("path"),
-        Language::CSharp => Some("qualified_name"),
+        // C# `using_directive`'s `name` field is the alias; see `csharp_using_symbols`.
+        Language::CSharp => None,
         // PHP `namespace_use_declaration` has no path field; see `php_import_symbols`.
         Language::Php => None,
         Language::Ruby => Some("argument"),
