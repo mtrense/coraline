@@ -783,13 +783,13 @@ fn callers_and_callees_return_stored_calls() {
         let conn = coraline::db::open_database(path).expect("Failed to open database");
         let mut failures = Vec::new();
         for pair in fixture.calls {
-            let (caller, callee) = pair.split_once(" -> ").expect("pair format");
+            let (source_name, target_name) = pair.split_once(" -> ").expect("pair format");
             let ids: Option<(String, String)> = conn
                 .query_row(
                     "SELECT e.source, e.target FROM edges e
                        JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
                       WHERE e.kind = 'calls' AND s.name = ?1 AND t.name = ?2",
-                    [caller, callee],
+                    [source_name, target_name],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .ok();
@@ -797,17 +797,17 @@ fn callers_and_callees_return_stored_calls() {
                 failures.push(format!("{}: no calls edge `{pair}`", fixture.lang));
                 continue;
             };
-            let callees = tool_names(path, "coraline_callees", "callees", &source);
-            if !callees.contains(callee) {
+            let outgoing = tool_names(path, "coraline_callees", "callees", &source);
+            if !outgoing.contains(target_name) {
                 failures.push(format!(
-                    "{}: callees of {caller} lack {callee}: {callees:?}",
+                    "{}: callees of {source_name} lack {target_name}: {outgoing:?}",
                     fixture.lang
                 ));
             }
-            let callers = tool_names(path, "coraline_callers", "callers", &target);
-            if !callers.contains(caller) {
+            let incoming = tool_names(path, "coraline_callers", "callers", &target);
+            if !incoming.contains(source_name) {
                 failures.push(format!(
-                    "{}: callers of {callee} lack {caller}: {callers:?}",
+                    "{}: callers of {target_name} lack {source_name}: {incoming:?}",
                     fixture.lang
                 ));
             }
