@@ -282,3 +282,47 @@ fn kotlin_package_constructors_companions_and_type_aliases_are_extracted() {
         ],
     );
 }
+
+#[test]
+fn kotlin_top_level_declarations_are_implicitly_exported() {
+    let temp = index_project(&[
+        (
+            "src/model/Shape.kt",
+            "package com.example.model\n\
+             \n\
+             interface Named\n\
+             class Circle {\n\
+             \x20   fun member() {}\n\
+             }\n\
+             object Registry\n\
+             fun format(d: Double): String = d.toString()\n\
+             internal fun internalHelper() {}\n\
+             private fun hidden() {}\n\
+             val shared = 1\n\
+             private val secret = 2\n\
+             typealias Names = List<String>\n",
+        ),
+        ("src/Script.kt", "fun topLevel() {}\n"),
+    ]);
+
+    let exports = query_set(
+        temp.path(),
+        "SELECT t.name || ' | ' || t.signature FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'exports' AND s.kind = 'file'",
+    );
+    let expected: BTreeSet<String> = [
+        "Named | com.example.model.Named",
+        "Circle | com.example.model.Circle",
+        "Registry | com.example.model.Registry",
+        "format | com.example.model.format",
+        "internalHelper | com.example.model.internalHelper",
+        "shared | com.example.model.shared",
+        "Names | com.example.model.Names",
+        "topLevel | topLevel",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    assert_eq!(exports, expected);
+}

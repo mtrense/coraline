@@ -106,6 +106,14 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 // kotlin_class_kind
                 "modifiers",
                 "class_modifier",
+                // kotlin_export_symbol
+                "class_declaration",
+                "object_declaration",
+                "function_declaration",
+                "property_declaration",
+                "type_alias",
+                "package_header",
+                "visibility_modifier",
             ],
             // kotlin_node_name: `type_alias` name, `companion_object` name
             &["type", "name"],

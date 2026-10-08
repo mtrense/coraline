@@ -563,6 +563,23 @@ fn extract_nodes(
         &mut symbol_index,
         now_ms,
     );
+    if language == Language::Kotlin {
+        // Kotlin has no export syntax: every top-level declaration that is
+        // not `private` is visible to other files.
+        let root = tree.root_node();
+        for decl in root.children(&mut root.walk()) {
+            add_export_nodes(
+                &decl,
+                source,
+                language,
+                file_path,
+                root_id.to_string(),
+                &mut nodes,
+                &mut edges,
+                now_ms,
+            );
+        }
+    }
     walk_tree_calls(
         tree.root_node(),
         source,
@@ -1689,11 +1706,45 @@ fn export_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Export
         Language::Swift => Vec::new(),
 
         // === Kotlin: implicit (all top-level unless private) ===
-        Language::Kotlin => Vec::new(),
+        Language::Kotlin => kotlin_export_symbol(node, source).into_iter().collect(),
 
         // Blazor, markup and unsupported languages: no exports
         _ => Vec::new(),
     }
+}
+
+/// Implicit export of a top-level Kotlin declaration: every non-`private`
+/// declaration, keyed by its fully-qualified name (`package.Name`), which
+/// is the module path Kotlin imports refer to.
+fn kotlin_export_symbol(node: &TsNode, source: &str) -> Option<ExportSymbol> {
+    if !matches!(
+        node.kind(),
+        "class_declaration"
+            | "object_declaration"
+            | "function_declaration"
+            | "property_declaration"
+            | "type_alias"
+    ) {
+        return None;
+    }
+
+    let is_private = child_of_kind(node, "modifiers")
+        .and_then(|modifiers| child_of_kind(&modifiers, "visibility_modifier"))
+        .is_some_and(|vis| vis.utf8_text(source.as_bytes()) == Ok("private"));
+    if is_private {
+        return None;
+    }
+
+    let name = node_name(node, source, Language::Kotlin)?;
+    let package = node
+        .parent()
+        .and_then(|root| child_of_kind(&root, "package_header"))
+        .and_then(|header| kotlin_package_name(&header, source));
+    let module_path = package.map_or_else(|| name.clone(), |p| format!("{p}.{name}"));
+    Some(ExportSymbol {
+        name,
+        module_path: Some(module_path),
+    })
 }
 
 fn rust_use_path(node: &TsNode, source: &str) -> Option<String> {
