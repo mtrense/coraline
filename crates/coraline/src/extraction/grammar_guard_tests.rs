@@ -99,7 +99,11 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["name", "alias", "source"],
         ),
-        Language::Python => (&[], &["name", "alias"]),
+        // python_import_symbols
+        Language::Python => (
+            &["import_statement", "aliased_import", "wildcard_import"],
+            &["name", "alias", "module_name"],
+        ),
         // go_import_symbols, go_callee
         Language::Go => (
             &[

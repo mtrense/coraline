@@ -1214,6 +1214,7 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
         Language::Go => return go_import_symbols(node, source),
         Language::Rust => return rust_use_symbols(node, source),
         Language::CSharp => return csharp_using_symbols(node, source).into_iter().collect(),
+        Language::Python => return python_import_symbols(node, source),
         _ => {}
     }
     let Some(module_path) = import_module_path(node, source, language) else {
@@ -1232,32 +1233,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
             }
 
             if imports.is_empty() {
-                imports.push(ImportSymbol {
-                    local_name: module_path.clone(),
-                    module_path,
-                    export_name: None,
-                });
-            }
-            imports
-        }
-
-        // === Python: from X import Y, Z ===
-        Language::Python => {
-            let mut imports = Vec::new();
-            let import_name = node
-                .child_by_field_name("name")
-                .or_else(|| node.child_by_field_name("alias"))
-                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                .map(|s| s.to_string());
-
-            if let Some(name) = import_name {
-                imports.push(ImportSymbol {
-                    local_name: name.clone(),
-                    module_path,
-                    export_name: Some(name),
-                });
-            } else {
-                // Fallback for plain imports
                 imports.push(ImportSymbol {
                     local_name: module_path.clone(),
                     module_path,
@@ -1441,6 +1416,65 @@ fn collect_rust_use(node: TsNode, source: &str, prefix: &str, imports: &mut Vec<
     }
 }
 
+/// Imports of a Python `import_statement` / `import_from_statement`, one per
+/// (repeated) `name` field:
+/// - `import a.b, c as d` → modules `a.b` (local `a.b`) and `c` (local `d`);
+/// - `from m import A, B as C` → module `m`, `export=A` / `export=B`;
+/// - `from m import *` → local `*`.
+fn python_import_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
+    let text = |n: TsNode| {
+        n.utf8_text(source.as_bytes())
+            .ok()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    // `(name, alias)` of a `dotted_name` / `aliased_import`.
+    let name_and_alias = |n: TsNode| -> Option<(String, Option<String>)> {
+        if n.kind() == "aliased_import" {
+            let name = n.child_by_field_name("name").and_then(text)?;
+            Some((name, n.child_by_field_name("alias").and_then(text)))
+        } else {
+            Some((text(n)?, None))
+        }
+    };
+    let names: Vec<TsNode> = node
+        .children_by_field_name("name", &mut node.walk())
+        .collect();
+
+    if node.kind() == "import_statement" {
+        return names
+            .into_iter()
+            .filter_map(name_and_alias)
+            .map(|(module_path, alias)| ImportSymbol {
+                local_name: alias.unwrap_or_else(|| module_path.clone()),
+                module_path,
+                export_name: None,
+            })
+            .collect();
+    }
+
+    let Some(module_path) = node.child_by_field_name("module_name").and_then(text) else {
+        return Vec::new();
+    };
+    if child_of_kind(node, "wildcard_import").is_some() {
+        return vec![ImportSymbol {
+            local_name: "*".to_string(),
+            module_path,
+            export_name: None,
+        }];
+    }
+    names
+        .into_iter()
+        .filter_map(name_and_alias)
+        .map(|(name, alias)| ImportSymbol {
+            local_name: alias.unwrap_or_else(|| name.clone()),
+            module_path: module_path.clone(),
+            export_name: Some(name),
+        })
+        .collect()
+}
+
 /// Import of a C# `using_directive`: `using A.B;`, `using static A.B;`,
 /// `global using A.B;` and aliases `using X = A.B<T>;`. The `name` field is
 /// the alias; the imported namespace/type is the remaining name child.
@@ -1563,6 +1597,7 @@ fn import_path_field(language: Language) -> Option<&'static str> {
         Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
             Some("source")
         }
+        // `import_from_statement` only; see `python_import_symbols`.
         Language::Python => Some("module_name"),
         // Go `import_declaration` has no fields; see `go_import_symbols`.
         Language::Go => None,
