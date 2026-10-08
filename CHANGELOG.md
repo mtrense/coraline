@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`extends` / `implements` edges** from supertype clauses: Kotlin delegation specifiers, Java `extends` / `implements` (and interface `extends`), C# base lists, TypeScript / JavaScript class heritage and interface `extends`, Swift inheritance specifiers, Python class bases, Ruby `class C < Base`, PHP `extends` / `implements`, C++ base classes and Rust `impl Trait for Type` (type declared in the same file). Where the syntax doesn't tell (Kotlin, C#, Swift, C++), a class / struct naming an interface, protocol or trait implements it, otherwise it extends. TypeScript `abstract class` declarations are now extracted.
+- **`instantiates` edges** from explicit constructions (`new Foo()` in Java / C# / JS / TS / PHP / C++, Swift `Foo<T>()`, Ruby `Foo.new`, Go composite literals, Rust struct expressions) and from calls whose callee resolves to a class / struct rather than a function (`Circle(2.0)` in Kotlin, Python, Swift, C++, incl. Kotlin calls through an import). The edge points at the type; constructors named like their type (Java, C#, C++) are no longer call targets.
+- Supertype and instantiation references resolve with the same rules as calls (same file, same dir, imports, packages / namespaces / modules), never by a project-wide name match (#43). A qualifier spelling out a package (`new app.a.Circle()`) resolves without an import.
+- `coraline_callers`, `coraline_callees` and `coraline_find_references` accept `edge_kind: "instantiates"`.
+
 ### Fixed
 
 - **Kotlin and Swift files are indexed by default** — `**/*.kt`, `**/*.kts` and `**/*.swift` added to the default include patterns; `.kts` is detected as Kotlin. Files of unknown language are no longer indexed (they used to get a lone `file` node).
@@ -18,8 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Overloads and same-named methods** — calls with several candidates were dropped. They are narrowed by receiver (`Type.m()`, the caller's own type for unqualified / `this.m()` calls); overloads of one method all get an edge, and up to three candidates of different types get an edge each with confidence `0.3`.
 - **Ruby `require` / `require_relative`** with a literal path are Import nodes instead of calls to `require`.
 - Java `package` declarations, wildcard / static imports and C# file-scoped namespaces are extracted.
+- **Resolution no longer stalls at 10,000 unresolved refs** — each run read one unordered page of 10k refs; once that many never-resolvable refs (stdlib calls) piled up, later refs were never resolved. The resolver now pages through all refs by id.
+- **Edges into a re-indexed file survive sync / incremental index** — deleting a file's nodes cascaded to edges from other files, whose refs were already gone. Incoming edges are now queued again as unresolved refs before the delete.
+- **Calls outside functions** (property / field initializers, Kotlin `init {}` and getters, class-field arrow functions, top-level script code) were dropped; they are attributed to the enclosing type, else to the file.
 
 ### Changed
+
+- `new Foo()`, Ruby `Foo.new` and Swift `Foo<T>()` are recorded as `instantiates` refs instead of calls to `Foo`, and calls to Java / C# / C++ constructors resolve to the class (`instantiates`) instead of the constructor method (`calls`).
+- Go `type X struct {…}` / `type X interface {…}` are `struct` / `interface` nodes (were `type_alias`).
 
 - Same-file calls with a qualifier other than `this` / `self` or a type declared in the file (`obj.m()`, `util.f()`) are resolved by the resolver (confidence `0.5`) instead of directly at extraction (`1.0`), so an import binding the qualifier takes precedence.
 - DB schema v5: `unresolved_refs.qualifier` stores the call's qualifier (additive migration).
@@ -33,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Grammar guard test: every node kind and field name in the extraction tables must exist in the language's tree-sitter grammar.
 - Per-language extraction tests (`tests/<lang>_extraction_test.rs`) and end-to-end edge fixture tests (`tests/edge_fixture_test.rs`) asserting stored `calls` / `imports` edges and `coraline_callers` / `coraline_callees` results for Kotlin, Java, Swift, Go, Python, TypeScript, C#, Rust, C/C++, Ruby and PHP.
 - Resolver tests (`tests/resolver_test.rs`): cross-dir resolution per language, plus regression tests mirroring #43 (same-named functions in unrelated directories / packages / Swift projects without an import stay unlinked).
+- Inheritance / instantiation tests (`tests/inheritance_test.rs`, `tests/instantiates_test.rs`) per language, incl. #43-style negatives; edge fixture tests now assert `extends` / `implements` / `instantiates` edges and their retrieval by `edge_kind`.
+- Pipeline tests (`tests/pipeline_test.rs`, `tests/scope_attribution_test.rs`): >10k unresolvable refs, re-indexed targets, calls outside functions.
 
 ## [0.13.1] - 2026-09-08
 

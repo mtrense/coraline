@@ -145,7 +145,9 @@ pub struct Edge {
 }
 ```
 
-**EdgeKind values:** `contains`, `calls`, `imports`, `exports`, `extends`, `implements`, `references`, `type_of`, `returns`, `instantiates`
+**EdgeKind values:** `contains`, `calls`, `imports`, `exports`, `extends`, `implements`, `references`, `type_of`, `returns`, `instantiates`, `overrides`, `decorates`
+
+Extraction emits `contains`, `calls`, `imports`, `exports`, `extends`, `implements` and `instantiates`; the other kinds are defined but not emitted yet. `extends` / `implements` come from supertype clauses (a class / struct naming an interface, protocol or trait implements it, otherwise extends; Rust `impl Trait for Type` implements). `instantiates` comes from explicit constructions (`new Foo()`, `Foo.new`, `Foo{…}`) and from calls whose callee resolves to a class / struct (`Circle(2.0)`); it points at the type, never at a constructor method. Type references are resolved with the same scoping rules as calls (same file, same dir, imports, packages / namespaces / modules; no project-wide name match).
 
 Every `Edge` carries a `confidence: f32` in `[0.0, 1.0]`:
 

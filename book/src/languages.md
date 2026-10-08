@@ -87,6 +87,24 @@ Different languages produce different node kinds:
 ### Markup (Markdown)
 - `module` (file-level)
 
+## Inheritance and Instantiation Edges
+
+| Language | `extends` / `implements` from | `instantiates` from |
+|---|---|---|
+| Kotlin | delegation specifiers (`: Base(), I`) | calls resolving to a class (`Circle(2.0)`) |
+| Java | `extends`, `implements`, interface `extends` | `new Foo()` |
+| C# | base list (`: Base, IFoo`) | `new Foo()` |
+| TypeScript / JavaScript | `extends`, `implements`, interface `extends` | `new Foo()` |
+| Swift | inheritance specifiers (`: Base, P`) | `Foo<T>()`, calls resolving to a class / struct |
+| Python | class bases (`class C(Base)`) | calls resolving to a class |
+| Ruby | `class C < Base` | `Foo.new` |
+| PHP | `extends`, `implements` | `new Foo()` |
+| C++ | base classes (`: public Base`) | `new Foo()`, calls resolving to a class |
+| Rust | `impl Trait for Type` (type declared in the same file) | struct expressions (`Foo { … }`) |
+| Go | - (interfaces are implicit) | composite literals (`pkg.Foo{…}`) |
+
+Where the syntax doesn't say which (Kotlin, C#, Swift, C++), a class / struct naming an interface, protocol or trait gets `implements`, everything else `extends`.
+
 ## Framework-Specific Features
 
 ### Rust

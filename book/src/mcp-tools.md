@@ -94,13 +94,14 @@ Search for code symbols by name or pattern across the indexed codebase.
 
 ### `coraline_callers`
 
-Find all functions/methods that call a given symbol (incoming `calls` edges).
+Find all functions/methods that call a given symbol (incoming `calls` edges; `edge_kind` selects another kind, e.g. `extends` for subclasses or `instantiates` for constructions).
 
 **Input:**
 
 | Parameter        | Type   | Required | Default | Description                                                                                                                                                                                                                                                                                                                                      |
 | ---------------- | ------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `node_id`        | string | ✅       | —       | ID of the target node                                                                                                                                                                                                                                                                                                                            |
+| `edge_kind`      | string |          | `calls` | Edge kind: `calls`, `imports`, `extends`, `implements`, `instantiates`, `references`                                                                                                                                                                                                                                                             |
 | `limit`          | number |          | `20`    | Maximum callers to return                                                                                                                                                                                                                                                                                                                        |
 | `min_confidence` | number |          | `0.0`   | Minimum edge resolution confidence in `[0.0, 1.0]`. Edges below this threshold are filtered out. Direct AST-extracted edges have confidence `1.0`; strongly-typed Rust `crate::` / `super::` / `self::` resolutions have confidence `0.95`; generic name matches / framework fallbacks have confidence `0.5`; calls linked to each of several equally ranked candidates of different types have confidence `0.3`. Default `0.0` includes every edge. |
 
@@ -127,13 +128,14 @@ Find all functions/methods that call a given symbol (incoming `calls` edges).
 
 ### `coraline_callees`
 
-Find all functions/methods that a given symbol calls (outgoing `calls` edges).
+Find all functions/methods that a given symbol calls (outgoing `calls` edges; `edge_kind` selects another kind, e.g. `extends` for supertypes or `instantiates` for constructed types).
 
 **Input:**
 
 | Parameter        | Type   | Required | Default | Description                                                                           |
 | ---------------- | ------ | -------- | ------- | ------------------------------------------------------------------------------------- |
 | `node_id`        | string | ✅       | —       | ID of the source node                                                                 |
+| `edge_kind`      | string |          | `calls` | Edge kind: `calls`, `imports`, `extends`, `implements`, `instantiates`, `references`  |
 | `limit`          | number |          | `20`    | Maximum callees to return                                                             |
 | `min_confidence` | number |          | `0.0`   | Minimum edge resolution confidence in `[0.0, 1.0]`. Same scale as `coraline_callers`. |
 | `limit`          | number |          | `20`    | Maximum callees to return                                                             |
@@ -321,7 +323,7 @@ Find all nodes that reference (call, import, extend, implement, etc.) a given sy
 | Parameter        | Type   | Required | Default | Description                                                                                                                                                                                                                                  |
 | ---------------- | ------ | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `node_id`        | string | ✅       | —       | ID of the target node                                                                                                                                                                                                                        |
-| `edge_kind`      | string |          | all     | Filter: `calls`, `imports`, `extends`, `implements`, `references`                                                                                                                                                                            |
+| `edge_kind`      | string |          | all     | Filter: `calls`, `imports`, `extends`, `implements`, `instantiates`, `references`                                                                                                                                                            |
 | `limit`          | number |          | `50`    | Maximum references                                                                                                                                                                                                                           |
 | `min_confidence` | number |          | `0.0`   | Minimum edge resolution confidence in `[0.0, 1.0]`. Same scale as `coraline_callers` / `coraline_callees`: `1.0` = direct AST-extracted, `0.95` = strong Rust path, `0.5` = generic / framework fallback, `0.3` = one of several ambiguous call targets. Default `0.0` includes every edge. |
 

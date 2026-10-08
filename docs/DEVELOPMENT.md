@@ -98,7 +98,9 @@ coraline/
 | `tests/extraction_test.rs` | 4 | Integration: AST parsing |
 | `src/extraction/grammar_guard_tests.rs` | - | Unit: every node kind / field name in the extraction tables exists in its tree-sitter grammar |
 | `tests/<lang>_extraction_test.rs` | - | Integration: per-language extraction (nodes, calls, imports), helpers in `tests/common/mod.rs` |
-| `tests/edge_fixture_test.rs` | 6 (2 ignored) | Integration: per-language multi-directory project, stored same-file / same-dir / cross-dir `Calls` and `Imports` edges + `coraline_callers` / `coraline_callees`; ignored tests hold Extends/Implements/Instantiates expectations not implemented yet |
+| `tests/edge_fixture_test.rs` | 7 | Integration: per-language multi-directory project, stored same-file / same-dir / cross-dir `Calls`, `Imports`, `Extends` / `Implements` and `Instantiates` edges + `coraline_callers` / `coraline_callees` / `coraline_find_references` (incl. `edge_kind` filter) |
+| `tests/inheritance_test.rs` | - | Integration: `Extends` / `Implements` from supertype clauses per language (incl. Rust trait impls), interface vs. class targets; no edge without an import / package link (#43) |
+| `tests/instantiates_test.rs` | - | Integration: `Instantiates` from `new Foo()`, `Foo.new`, `Foo{…}` and calls resolving to a class / struct; edge points at the type, not a constructor method; no edge without an import / package link (#43) |
 | `tests/resolver_test.rs` | - | Integration: `Calls` resolution through imports, packages, Ruby requires and Swift modules, qualifier / receiver filtering, overloads and ambiguous calls; unrelated dirs with same-named functions and no import must stay unlinked (upstream #43) |
 | `tests/pipeline_test.rs` | - | Integration: resolver pages through all unresolved refs (>10k unresolvable refs don't starve later ones); edges into a re-indexed file survive sync / incremental index |
 | `tests/scope_attribution_test.rs` | - | Integration: calls outside functions (initializers, `init {}`, getters, class fields, top-level code) attributed to the enclosing type / file |
