@@ -97,3 +97,31 @@ fn kotlin_calls_are_extracted() {
         ],
     );
 }
+
+/// `file -> import name` pairs from import edges.
+fn import_pairs(project_path: &Path) -> BTreeSet<String> {
+    query_set(
+        project_path,
+        "SELECT s.name || ' -> ' || t.name FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'imports' AND t.kind = 'import'",
+    )
+}
+
+#[test]
+fn kotlin_imports_are_extracted() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "package com.example.app\n\
+         \n\
+         import com.example.model.Circle\n\
+         import com.example.model.Point\n\
+         \n\
+         fun main() {}\n",
+    )]);
+
+    assert_contains_all(
+        &import_pairs(temp.path()),
+        &["Main.kt -> Circle", "Main.kt -> Point"],
+    );
+}

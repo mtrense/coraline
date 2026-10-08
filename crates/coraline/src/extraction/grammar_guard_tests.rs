@@ -96,8 +96,15 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
         Language::Python => (&[], &["name", "alias"]),
         Language::Go => (&[], &["alias"]),
         Language::Java | Language::CSharp | Language::Blazor => (&["modifiers"], &[]),
-        // kotlin_callee
-        Language::Kotlin => (&["identifier", "navigation_expression"], &[]),
+        // kotlin_callee, import_module_path
+        Language::Kotlin => (
+            &[
+                "identifier",
+                "navigation_expression",
+                "qualified_identifier",
+            ],
+            &[],
+        ),
         _ => (&[], &[]),
     }
 }
@@ -141,7 +148,7 @@ fn known_bad(language: Language) -> &'static [&'static str] {
             "kind:function_call_expression",
             "kind:struct_declaration",
         ],
-        Language::Kotlin => &["kind:import_alias", "kind:interface_declaration"],
+        Language::Kotlin => &["kind:interface_declaration"],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
         Language::Blazor => &[
             "kind:component_definition",
@@ -177,7 +184,7 @@ fn bad_names(language: Language) -> BTreeSet<String> {
     let has_imports = mappings
         .iter()
         .any(|(_, node_kind, _)| *node_kind == NodeKind::Import);
-    let import_field = has_imports.then(|| import_path_field(language));
+    let import_field = has_imports.then(|| import_path_field(language)).flatten();
     let fields = call_name_fields(language)
         .iter()
         .copied()

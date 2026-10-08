@@ -1260,34 +1260,44 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
     }
 }
 
-/// Field name holding the module path of an import declaration.
+/// Field name holding the module path of an import declaration, if the
+/// grammar exposes one (see `import_module_path` for field-less grammars).
 ///
 /// The field must exist in the language's grammar; the grammar guard test
 /// (`grammar_guard_tests`) enforces this.
-fn import_path_field(language: Language) -> &'static str {
+fn import_path_field(language: Language) -> Option<&'static str> {
     match language {
-        Language::Rust => "path",
-        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => "source",
-        Language::Python => "module_name",
-        Language::Go => "import_spec",
-        Language::Java => "name",
-        Language::C | Language::Cpp => "path",
-        Language::CSharp => "qualified_name",
-        Language::Php => "name",
-        Language::Ruby => "argument",
-        Language::Swift => "module_name",
-        Language::Kotlin => "type",
-        _ => "source",
+        Language::Rust => Some("path"),
+        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
+            Some("source")
+        }
+        Language::Python => Some("module_name"),
+        Language::Go => Some("import_spec"),
+        Language::Java => Some("name"),
+        Language::C | Language::Cpp => Some("path"),
+        Language::CSharp => Some("qualified_name"),
+        Language::Php => Some("name"),
+        Language::Ruby => Some("argument"),
+        Language::Swift => Some("module_name"),
+        // Kotlin `import` has no fields; the path is a `qualified_identifier` child.
+        Language::Kotlin => None,
+        _ => Some("source"),
     }
 }
 
 fn import_module_path(node: &TsNode, source: &str, language: Language) -> Option<String> {
-    let field = import_path_field(language);
-    let child = node.child_by_field_name(field).or_else(|| {
-        // Fallback: get first string-like child
+    let child = if language == Language::Kotlin {
         node.children(&mut node.walk())
-            .find(|c| matches!(c.kind(), "string" | "identifier" | "scoped_identifier"))
-    })?;
+            .find(|c| c.kind() == "qualified_identifier")?
+    } else {
+        import_path_field(language)
+            .and_then(|field| node.child_by_field_name(field))
+            .or_else(|| {
+                // Fallback: get first string-like child
+                node.children(&mut node.walk())
+                    .find(|c| matches!(c.kind(), "string" | "identifier" | "scoped_identifier"))
+            })?
+    };
 
     let raw = child.utf8_text(source.as_bytes()).ok()?.trim().to_string();
     let trimmed = raw
@@ -1968,7 +1978,7 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("interface_declaration", NodeKind::Interface, true),
             ("object_declaration", NodeKind::Class, true),
             ("enum_class_body", NodeKind::Enum, true),
-            ("import_alias", NodeKind::Import, false),
+            ("import", NodeKind::Import, false),
         ],
 
         // === Blazor ===
