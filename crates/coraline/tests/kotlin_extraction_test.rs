@@ -232,3 +232,53 @@ fn kotlin_enums_and_entries_are_extracted() {
     );
     assert!(!nodes.contains("class:Color"), "{nodes:#?}");
 }
+
+#[test]
+fn kotlin_package_constructors_companions_and_type_aliases_are_extracted() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "package com.example.app\n\
+         \n\
+         typealias Names = List<String>\n\
+         \n\
+         class Foo(val x: Int) {\n\
+         \x20   constructor(s: String) : this(s.length) {\n\
+         \x20       bar()\n\
+         \x20   }\n\
+         \x20   companion object {\n\
+         \x20       fun make(): Foo = Foo(1)\n\
+         \x20   }\n\
+         \x20   fun bar() {}\n\
+         }\n\
+         \n\
+         class Baz {\n\
+         \x20   companion object Factory {\n\
+         \x20       fun create(): Baz = Baz()\n\
+         \x20   }\n\
+         }\n",
+    )]);
+
+    assert_contains_all(
+        &node_set(temp.path()),
+        &[
+            "module:com.example.app",
+            "type_alias:Names",
+            "method:constructor",
+            "class:Companion",
+            "class:Factory",
+            "function:make",
+            "function:create",
+        ],
+    );
+    assert_contains_all(&call_pairs(temp.path()), &["constructor -> bar"]);
+    assert_contains_all(
+        &query_set(
+            temp.path(),
+            "SELECT qualified_name FROM nodes WHERE name IN ('make', 'create')",
+        ),
+        &[
+            "src/Main.kt::Foo::Companion::make",
+            "src/Main.kt::Baz::Factory::create",
+        ],
+    );
+}

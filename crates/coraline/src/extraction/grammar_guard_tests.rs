@@ -107,7 +107,8 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "modifiers",
                 "class_modifier",
             ],
-            &[],
+            // kotlin_node_name: `type_alias` name, `companion_object` name
+            &["type", "name"],
         ),
         _ => (&[], &[]),
     }

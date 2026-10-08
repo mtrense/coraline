@@ -986,6 +986,13 @@ fn child_of_kind<'tree>(node: &TsNode<'tree>, kind: &str) -> Option<TsNode<'tree
     node.children(&mut node.walk()).find(|c| c.kind() == kind)
 }
 
+/// Package of a Kotlin `package_header` node.
+fn kotlin_package_name(node: &TsNode, source: &str) -> Option<String> {
+    child_of_kind(node, "qualified_identifier")
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .map(|s| s.to_string())
+}
+
 /// Names of Kotlin declarations that have no `name` field.
 fn kotlin_node_name(node: &TsNode, source: &str) -> Option<String> {
     let name_node = match node.kind() {
@@ -994,6 +1001,16 @@ fn kotlin_node_name(node: &TsNode, source: &str) -> Option<String> {
         "property_declaration" => child_of_kind(node, "variable_declaration")
             .and_then(|decl| child_of_kind(&decl, "identifier"))?,
         "enum_entry" => child_of_kind(node, "identifier")?,
+        "type_alias" => node.child_by_field_name("type")?,
+        "secondary_constructor" => return Some("constructor".to_string()),
+        "companion_object" => {
+            return Some(
+                node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .unwrap_or("Companion")
+                    .to_string(),
+            );
+        }
         _ => return None,
     };
     name_node
@@ -1507,6 +1524,8 @@ fn module_name(node: &TsNode, source: &str, language: Language) -> Option<String
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source.as_bytes()).ok())
             .map(|s| s.to_string()),
+        // `package a.b.c` → module `a.b.c`
+        Language::Kotlin => kotlin_package_name(node, source),
         _ => None,
     }
 }
@@ -2018,6 +2037,10 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("class_declaration", NodeKind::Class, true),
             ("object_declaration", NodeKind::Class, true),
             ("enum_entry", NodeKind::EnumMember, false),
+            ("secondary_constructor", NodeKind::Method, false),
+            ("companion_object", NodeKind::Class, true),
+            ("type_alias", NodeKind::TypeAlias, false),
+            ("package_header", NodeKind::Module, false),
             ("import", NodeKind::Import, false),
         ],
 
