@@ -988,6 +988,12 @@ fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
         }
     }
 
+    if matches!(language, Language::C | Language::Cpp) && node.kind() == "function_definition" {
+        return c_function_name(node)
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.to_string());
+    }
+
     // Swift `deinit` has no name field.
     if language == Language::Swift && node.kind() == "deinit_declaration" {
         return Some("deinit".to_string());
@@ -1002,6 +1008,67 @@ fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
     name_node
         .and_then(|n| n.utf8_text(source.as_bytes()).ok())
         .map(|s| s.to_string())
+}
+
+/// Name node of a C/C++ `function_definition`. The name is not a field of the
+/// definition but sits at the end of its `declarator` chain, e.g.
+/// `pointer_declarator > function_declarator > identifier` for `int *f()`,
+/// or `qualified_identifier` (`Shape::area`) in C++.
+fn c_function_name<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    let mut current = node.child_by_field_name("declarator")?;
+    loop {
+        current = match current.kind() {
+            "identifier" | "field_identifier" | "destructor_name" | "operator_name" => {
+                return Some(current);
+            }
+            "qualified_identifier" | "template_function" => current.child_by_field_name("name")?,
+            // Wrappers without a `declarator` field.
+            "parenthesized_declarator" | "reference_declarator" | "attributed_declarator" => {
+                current
+                    .named_children(&mut current.walk())
+                    .find(|c| !matches!(c.kind(), "ms_call_modifier" | "attribute_declaration"))?
+            }
+            _ => current.child_by_field_name("declarator")?,
+        };
+    }
+}
+
+/// Whether a C++ `function_definition` defines a method: either inline in a
+/// class body or out of line with a qualified name (`void Shape::area()`).
+fn cpp_is_method(node: &TsNode) -> bool {
+    if node
+        .parent()
+        .is_some_and(|p| p.kind() == "field_declaration_list")
+    {
+        return true;
+    }
+    let mut current = node.child_by_field_name("declarator");
+    while let Some(declarator) = current {
+        if declarator.kind() == "qualified_identifier" {
+            return true;
+        }
+        current = declarator.child_by_field_name("declarator");
+    }
+    false
+}
+
+/// Callee of a C/C++ `call_expression`: the `function` expression, unwrapped
+/// to its member / unqualified name (`obj.run`, `p->go`, `std::sort`,
+/// `calc<int>`). Calls through function-pointer expressions have no name.
+fn c_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    let mut current = node.child_by_field_name("function")?;
+    loop {
+        current = match current.kind() {
+            "identifier" | "field_identifier" | "destructor_name" | "operator_name" => {
+                return Some(current);
+            }
+            "field_expression" => current.child_by_field_name("field")?,
+            "qualified_identifier" | "template_function" | "template_method" => {
+                current.child_by_field_name("name")?
+            }
+            _ => return None,
+        };
+    }
 }
 
 fn child_of_kind<'tree>(node: &TsNode<'tree>, kind: &str) -> Option<TsNode<'tree>> {
@@ -1959,6 +2026,7 @@ fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> 
         Language::Kotlin => kotlin_callee(node)?,
         Language::Swift => swift_callee(node)?,
         Language::Ruby => ruby_callee(node, source)?,
+        Language::C | Language::Cpp => c_callee(node)?,
         _ => call_name_fields(language)
             .iter()
             .find_map(|field| node.child_by_field_name(field))?,
@@ -2069,21 +2137,25 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("enum_specifier", NodeKind::Enum, true),
             ("type_definition", NodeKind::TypeAlias, false),
             ("preproc_include", NodeKind::Import, false),
-            ("preproc_define", NodeKind::Constant, false),
+            ("preproc_def", NodeKind::Constant, false),
+            // Function-like macros: callable like functions.
+            ("preproc_function_def", NodeKind::Function, false),
         ],
 
         // === C++ ===
         Language::Cpp => &[
+            // Methods are `function_definition`s too; see `cpp_is_method`.
             ("function_definition", NodeKind::Function, false),
-            ("method_definition", NodeKind::Method, false),
             ("class_specifier", NodeKind::Class, true),
             ("struct_specifier", NodeKind::Struct, true),
             ("union_specifier", NodeKind::Struct, true),
             ("enum_specifier", NodeKind::Enum, true),
-            ("namespace", NodeKind::Namespace, true),
+            ("namespace_definition", NodeKind::Namespace, true),
             ("declaration", NodeKind::Variable, false),
             ("preproc_include", NodeKind::Import, false),
-            ("preproc_define", NodeKind::Constant, false),
+            ("preproc_def", NodeKind::Constant, false),
+            // Function-like macros: callable like functions.
+            ("preproc_function_def", NodeKind::Function, false),
         ],
 
         // === C# ===
@@ -2184,6 +2256,11 @@ fn node_kind(node: &TsNode, source: &str, language: Language) -> (Option<NodeKin
             if node.kind() == "class_declaration" =>
         {
             (Some(swift_class_kind(node)), container)
+        }
+        (Language::Cpp, (Some(NodeKind::Function), container))
+            if node.kind() == "function_definition" && cpp_is_method(node) =>
+        {
+            (Some(NodeKind::Method), container)
         }
         _ => mapped,
     }

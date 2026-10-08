@@ -132,6 +132,41 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["constructed_type", "suffix", "declaration_kind"],
         ),
+        // c_function_name, c_callee
+        Language::C => (
+            &[
+                "function_definition",
+                "identifier",
+                "field_identifier",
+                "parenthesized_declarator",
+                "attributed_declarator",
+                "ms_call_modifier",
+                "attribute_declaration",
+                "field_expression",
+            ],
+            &["declarator", "function", "field"],
+        ),
+        // c_function_name, cpp_is_method, c_callee
+        Language::Cpp => (
+            &[
+                "function_definition",
+                "identifier",
+                "field_identifier",
+                "destructor_name",
+                "operator_name",
+                "qualified_identifier",
+                "template_function",
+                "template_method",
+                "parenthesized_declarator",
+                "reference_declarator",
+                "attributed_declarator",
+                "ms_call_modifier",
+                "attribute_declaration",
+                "field_declaration_list",
+                "field_expression",
+            ],
+            &["declarator", "name", "function", "field"],
+        ),
         // ruby_callee
         Language::Ruby => (
             &["constant", "scope_resolution"],
@@ -163,12 +198,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         }
         Language::Go => &["field:import_spec"],
         Language::Rust => &["field:visibility_modifier", "kind:use_item"],
-        Language::C => &["kind:preproc_define"],
-        Language::Cpp => &[
-            "kind:method_definition",
-            "kind:namespace",
-            "kind:preproc_define",
-        ],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
         // Blazor is parsed with the C# grammar (see `language_to_parser`).
         Language::Blazor => &[
