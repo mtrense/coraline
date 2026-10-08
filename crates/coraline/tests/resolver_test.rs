@@ -852,3 +852,34 @@ fn wildcard_imports_resolve_python_rust_go() {
         ],
     );
 }
+
+/// Calls resolved through Kotlin's implicit exports target the declaration,
+/// not the Export node, so `callers` of the function finds them.
+#[test]
+fn imported_calls_target_declarations_not_exports() {
+    let temp = index_project(&[
+        (
+            "a/Report.kt",
+            "package app.a\n\nfun describe(x: Double): String = \"\"\n",
+        ),
+        (
+            "b/App.kt",
+            "package app.b\n\nimport app.a.describe\n\nfun run() { describe(2.0) }\n",
+        ),
+    ]);
+    let calls = call_edges(temp.path());
+    assert!(
+        calls.contains("run -> describe @ a/Report.kt"),
+        "{calls:#?}"
+    );
+    let non_declaration_targets = query_set(
+        temp.path(),
+        "SELECT s.name || ' -> ' || t.name || ' [' || t.kind || ']' FROM edges e
+           JOIN nodes s ON s.id = e.source JOIN nodes t ON t.id = e.target
+          WHERE e.kind = 'calls' AND t.kind NOT IN ('function', 'method')",
+    );
+    assert!(
+        non_declaration_targets.is_empty(),
+        "calls must target declarations: {non_declaration_targets:#?}"
+    );
+}

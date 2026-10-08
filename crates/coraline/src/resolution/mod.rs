@@ -236,8 +236,10 @@ fn rank_candidates(
 
     if let Some(import) = context.symbol {
         let export_name = import.export_name.as_deref().unwrap_or(symbol_name);
-        if let Some(exports) = export_candidates(conn, &import.module_path, export_name)? {
-            return Ok(exports);
+        if let Some(declarations) =
+            export_candidates(conn, &import.module_path, export_name, reference_kind)?
+        {
+            return Ok(declarations);
         }
     }
 
@@ -339,28 +341,39 @@ fn best_matches(
     Ok((matches, rest))
 }
 
+/// Declarations exported as `export_name` from `module_path` (an Export
+/// node's signature, e.g. Kotlin `app.a.describe`). Export nodes are
+/// followed to the declaration of the same name in their file, so edges
+/// point at the function / class itself; for calls only functions and
+/// methods count.
 fn export_candidates(
     conn: &rusqlite::Connection,
     module_path: &str,
     export_name: &str,
+    reference_kind: EdgeKind,
 ) -> std::io::Result<Option<Vec<Node>>> {
-    let exports = db::find_exports_by_module(conn, module_path)?;
-    if exports.is_empty() {
-        return Ok(None);
-    }
-
-    let mut exact = Vec::new();
-    for export in exports {
-        if export.name == export_name {
-            exact.push(export);
+    let mut declarations = Vec::new();
+    for export in db::find_exports_by_module(conn, module_path)? {
+        if export.name != export_name {
+            continue;
         }
+        declarations.extend(
+            db::get_nodes_by_file(conn, &export.file_path, None)?
+                .into_iter()
+                .filter(|node| {
+                    node.name == export.name
+                        && !matches!(
+                            node.kind,
+                            NodeKind::Export | NodeKind::Import | NodeKind::File
+                        )
+                }),
+        );
+    }
+    if reference_kind == EdgeKind::Calls {
+        declarations = filter_by_call_kind(declarations);
     }
 
-    if exact.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(exact))
-    }
+    Ok((!declarations.is_empty()).then_some(declarations))
 }
 
 /// Score of a match through a package / namespace (`import app.a.f`,
