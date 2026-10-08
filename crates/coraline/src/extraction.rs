@@ -28,7 +28,7 @@ use tree_sitter::{Node as TsNode, Parser};
 
 use crate::config::is_language_supported;
 use crate::db;
-use crate::resolution::ReferenceResolver;
+use crate::resolution::{ReferenceResolver, receiver};
 use crate::types::{
     CodeGraphConfig, Edge, EdgeKind, ExtractionError, ExtractionErrorSeverity, FileRecord,
     Language, Node, NodeKind, UnresolvedReference, Visibility,
@@ -629,6 +629,8 @@ struct SymbolIndex {
     by_name: HashMap<String, Vec<String>>,
     by_key: HashMap<String, String>,
     callable_ids: HashSet<String>,
+    /// Enclosing type / namespace names per callable id, outermost first.
+    containers: HashMap<String, Vec<String>>,
 }
 
 /// Read visibility from a declaration tree-sitter node.
@@ -830,6 +832,7 @@ fn walk_tree_collect(
                 .or_default()
                 .push(id.clone());
             symbol_index.callable_ids.insert(id.clone());
+            symbol_index.containers.insert(id.clone(), stack.clone());
         }
 
         if let Some(parent_id) = parent_id.clone() {
@@ -929,7 +932,8 @@ fn walk_tree_calls(
             if let Some(callee_name) = call_name(&node, source, language) {
                 let start = node.start_position();
                 let qualifier = call_qualifier(&node, source, language);
-                match symbol_index.by_name.get(&callee_name) {
+                match same_file_targets(symbol_index, &callee_name, qualifier.as_deref(), language)
+                {
                     Some(targets) if targets.len() == 1 => {
                         edges.push(Edge {
                             source: source_id.clone(),
@@ -990,6 +994,39 @@ fn walk_tree_calls(
             }
         }
     }
+}
+
+/// Same-file declarations a call `qualifier.name()` resolves to, when the
+/// file alone can decide: unqualified calls, `this` / `self` receivers and
+/// qualifiers naming a type declared here (`Circle.create()`). Other
+/// qualifiers (`String.format`, `util.f`) may name an import or a type from
+/// elsewhere → `None`, left to the resolver.
+fn same_file_targets(
+    symbol_index: &SymbolIndex,
+    name: &str,
+    qualifier: Option<&str>,
+    language: Language,
+) -> Option<Vec<String>> {
+    let targets = symbol_index.by_name.get(name)?;
+    let Some(qualifier) = qualifier else {
+        return Some(targets.clone());
+    };
+    let containers = |id: &String| {
+        symbol_index
+            .containers
+            .get(id)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let decided_here = receiver::is_self_like(receiver::last_segment(qualifier))
+        || targets
+            .iter()
+            .any(|id| receiver::names_container(qualifier, containers(id)));
+    let admitted: Vec<String> = targets
+        .iter()
+        .filter(|id| receiver::qualifier_admits(language, qualifier, containers(id)))
+        .cloned()
+        .collect();
+    (decided_here && !admitted.is_empty()).then_some(admitted)
 }
 
 fn node_name(node: &TsNode, source: &str, language: Language) -> Option<String> {

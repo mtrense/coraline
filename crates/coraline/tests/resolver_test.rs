@@ -483,7 +483,7 @@ fn java_qualifier_resolves_through_class_import() {
                  import com.example.util.Util;\n\
                  \n\
                  public class App {\n\
-                 \x20   String render(int x) { return Util.format(x); }\n\
+                 \x20   String format(int x) { return Util.format(x); }\n\
                  }\n",
             ),
             (
@@ -511,7 +511,7 @@ fn java_qualifier_resolves_through_class_import() {
                  }\n",
             ),
         ],
-        &["render -> format @ src/main/java/com/example/util/Util.java"],
+        &["format -> format @ src/main/java/com/example/util/Util.java"],
     );
 }
 
@@ -881,5 +881,103 @@ fn imported_calls_target_declarations_not_exports() {
     assert!(
         non_declaration_targets.is_empty(),
         "calls must target declarations: {non_declaration_targets:#?}"
+    );
+}
+
+/// `String.format(..)` names another type: it must neither become a
+/// self-edge inside `format` nor hit an unrelated same-file / same-dir
+/// `format`.
+#[test]
+fn qualified_calls_skip_unrelated_same_file_functions() {
+    let temp = index_project(&[
+        (
+            "k/Fmt.kt",
+            "package k\n\n\
+             fun format(x: Int): String = String.format(\"%d\", x)\n\
+             fun pad(x: Int): String = Strings.format(x)\n",
+        ),
+        (
+            "k/Other.kt",
+            "package k\n\nfun trim(x: Int): String = Strings.format(x)\n",
+        ),
+        (
+            "j/Fmt.java",
+            "class Fmt {\n\
+             \x20   String format(int x) { return String.format(\"%d\", x); }\n\
+             \x20   String pad(int x) { return Strings.format(x); }\n\
+             }\n",
+        ),
+        (
+            "p/fmt.py",
+            "def format(x):\n    return Strings.format(x)\n\n\
+             def pad(x):\n    return str.format(x)\n",
+        ),
+    ]);
+    let calls = call_edges(temp.path());
+    let unexpected: Vec<_> = calls
+        .iter()
+        .filter(|call| call.contains("-> format @"))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "unexpected {unexpected:?} in {calls:#?}"
+    );
+}
+
+/// Qualifiers naming the callee's own type (or `this` / `self`) and plain
+/// variable receivers still resolve within the file.
+#[test]
+fn qualified_calls_resolve_to_their_own_type() {
+    assert_calls(
+        &[
+            (
+                "k/Shapes.kt",
+                "package k\n\n\
+                 class Circle {\n\
+                 \x20   fun area(): Double = 1.0\n\
+                 \x20   companion object {\n\
+                 \x20       fun create(): Circle = Circle()\n\
+                 \x20   }\n\
+                 }\n\n\
+                 fun build(): Double { val c = Circle.create(); return c.area() }\n",
+            ),
+            (
+                "j/A.java",
+                "class A {\n\
+                 \x20   void run() { this.helper(); A.stat(); }\n\
+                 \x20   void helper() {}\n\
+                 \x20   static void stat() {}\n\
+                 }\n",
+            ),
+            (
+                "p/a.py",
+                "class P:\n\
+                 \x20   def go(self):\n\
+                 \x20       self.assist()\n\
+                 \x20       P.fixed()\n\n\
+                 \x20   def assist(self):\n\
+                 \x20       pass\n\n\
+                 \x20   @staticmethod\n\
+                 \x20   def fixed():\n\
+                 \x20       pass\n",
+            ),
+            (
+                "r/src/lib.rs",
+                "pub struct Circle;\n\n\
+                 impl Circle {\n\
+                 \x20   pub fn make() -> Circle { Circle }\n\
+                 }\n\n\
+                 pub fn build() { Circle::make(); }\n",
+            ),
+        ],
+        &[
+            "build -> create @ k/Shapes.kt",
+            "build -> area @ k/Shapes.kt",
+            "run -> helper @ j/A.java",
+            "run -> stat @ j/A.java",
+            "go -> assist @ p/a.py",
+            "go -> fixed @ p/a.py",
+            "build -> make @ r/src/lib.rs",
+        ],
     );
 }

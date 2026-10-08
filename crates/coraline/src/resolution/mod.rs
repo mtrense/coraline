@@ -2,6 +2,7 @@
 
 pub mod frameworks;
 mod import_path;
+pub(crate) mod receiver;
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -233,13 +234,30 @@ fn rank_candidates(
     let Some(from_node) = from_node else {
         return Ok(nodes);
     };
+    // `String.format(..)` with `String` not imported: drop candidates the
+    // qualifier rules out (unrelated free functions, other types).
+    let admit = |nodes: Vec<Node>| -> Vec<Node> {
+        match context.qualifier_text {
+            Some(qualifier) if context.qualifier.is_empty() => nodes
+                .into_iter()
+                .filter(|node| {
+                    receiver::qualifier_admits(from_node.language, qualifier, &containers(node))
+                })
+                .collect(),
+            _ => nodes,
+        }
+    };
+    let nodes = admit(nodes);
 
     if let Some(import) = context.symbol {
         let export_name = import.export_name.as_deref().unwrap_or(symbol_name);
         if let Some(declarations) =
             export_candidates(conn, &import.module_path, export_name, reference_kind)?
         {
-            return Ok(declarations);
+            let declarations = admit(declarations);
+            if !declarations.is_empty() {
+                return Ok(declarations);
+            }
         }
     }
 
@@ -585,6 +603,19 @@ impl Target {
     }
 }
 
+/// Types / namespaces enclosing `node`, outermost first (`[Circle,
+/// Companion]` for `a.kt::Circle::Companion::create`).
+fn containers(node: &Node) -> Vec<&str> {
+    let path = node
+        .qualified_name
+        .strip_prefix(node.file_path.as_str())
+        .and_then(|rest| rest.strip_prefix("::"))
+        .unwrap_or(&node.qualified_name);
+    let mut segments: Vec<&str> = path.split("::").collect();
+    segments.pop();
+    segments
+}
+
 /// Name of the type / namespace declaring `node` (`Report` for
 /// `a/Report.cs::App.A::Report::Describe`), if any.
 fn container_name(node: &Node) -> Option<&str> {
@@ -652,10 +683,12 @@ struct ImportContext<'a> {
     qualifier: Vec<&'a FileImport>,
     /// Imports bringing names into scope (`import app.a.*`, `#include`).
     scope: Vec<&'a FileImport>,
+    /// The call's qualifier as written (`String`, `this`, `a.report`).
+    qualifier_text: Option<&'a str>,
 }
 
 impl<'a> ImportContext<'a> {
-    fn new(imports: &'a [FileImport], name: &str, qualifier: Option<&str>) -> Self {
+    fn new(imports: &'a [FileImport], name: &str, qualifier: Option<&'a str>) -> Self {
         Self {
             symbol: imports.iter().find(|import| import.local_name == name),
             qualifier: qualifier.map_or_else(Vec::new, |qualifier| {
@@ -668,6 +701,7 @@ impl<'a> ImportContext<'a> {
                 .iter()
                 .filter(|import| import.is_scope_import())
                 .collect(),
+            qualifier_text: qualifier,
         }
     }
 }
