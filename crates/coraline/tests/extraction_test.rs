@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use coraline::types::{Node, Visibility};
+use coraline::types::{Language, Node, Visibility};
 use coraline::{config, db, extraction};
 use tempfile::TempDir;
 
@@ -315,4 +315,34 @@ fn test_default_config_indexes_kotlin_and_swift() {
             "{path} should be indexed with the default config"
         );
     }
+}
+
+#[test]
+fn test_kotlin_script_files_are_kotlin() {
+    let (_temp, project_root) = setup_test_db();
+    let project_path = Path::new(&project_root);
+
+    write_project_files(
+        project_path,
+        &[(
+            "build.gradle.kts",
+            "fun configure() {\n    println(\"hi\")\n}\n",
+        )],
+    );
+
+    let cfg = config::create_default_config(project_path);
+    extraction::index_all(project_path, &cfg, false, None).expect("Failed to index project");
+
+    let conn = db::open_database(project_path).expect("Failed to open database");
+    let record = db::get_file_record(&conn, "build.gradle.kts")
+        .expect("Failed to query file record")
+        .expect("build.gradle.kts should be indexed");
+    assert_eq!(record.language, Language::Kotlin);
+
+    let results =
+        db::search_nodes(&conn, "configure", None, 10).expect("Failed to search for 'configure'");
+    assert!(
+        results.iter().any(|r| r.node.name == "configure"),
+        "Should extract Kotlin function from .kts file"
+    );
 }

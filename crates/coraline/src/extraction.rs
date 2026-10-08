@@ -2612,7 +2612,7 @@ fn detect_language(path: &str) -> Language {
         "php" => Language::Php,
         "rb" => Language::Ruby,
         "swift" => Language::Swift,
-        "kt" => Language::Kotlin,
+        "kt" | "kts" => Language::Kotlin,
         "liquid" => Language::Liquid,
         "razor" | "cshtml" => Language::Blazor,
         // New languages
