@@ -162,7 +162,7 @@ Every `Edge` carries a `confidence: f32` in `[0.0, 1.0]`:
 
 1. **Scan** — Glob the project tree using `include_patterns`/`exclude_patterns`.
 2. **Parse** — For each file, spawn the appropriate tree-sitter grammar and walk the AST.
-3. **Extract** — Emit `Node` and `Edge` records from the AST visitor. Every `Edge` carries a `confidence` field (see [Edges](#edges)).
+3. **Extract** — Emit `Node` and `Edge` records from the AST visitor. Every `Edge` carries a `confidence` field (see [Edges](#edges)). A call's source is the innermost enclosing function or method; calls outside any (property / field initializers, Kotlin `init {}` blocks and getters, class-field arrow functions, top-level script code) are attributed to the innermost enclosing type, else to the file node.
 4. **Store** — Upsert nodes and edges into SQLite. A file content hash prevents re-parsing unchanged files.
 5. **Resolve** — Walk `unresolved` reference edges, attempt name-based resolution in the DB; fall back to framework-specific resolvers for zero-candidate references. Resolved edges are stamped with their `confidence`.
 6. **Cluster** _(Phase 5.1)_ — Run Louvain community detection over the call graph and write `nodes.cluster_id`. Detects "module-like" communities (groups of nodes that call each other more than they call outside the group).

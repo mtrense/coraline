@@ -282,7 +282,7 @@ fn narrow_by_receiver(
             .filter(|node| receiver::names_container(qualifier, &containers(node)))
             .collect(),
         _ => from_node.map_or_else(Vec::new, |from| {
-            let own = containers(from);
+            let own = own_scope(from);
             candidates
                 .iter()
                 .filter(|node| node.file_path == from.file_path && containers(node) == own)
@@ -810,6 +810,25 @@ fn containers(node: &Node) -> Vec<&str> {
     let mut segments: Vec<&str> = path.split("::").collect();
     segments.pop();
     segments
+}
+
+/// Container path whose members an unqualified call from `caller` means:
+/// the caller's containers, or the type itself for calls made in a type's
+/// initializers (`init { setup() }` → `A.setup`).
+fn own_scope(caller: &Node) -> Vec<&str> {
+    let mut own = containers(caller);
+    if matches!(
+        caller.kind,
+        NodeKind::Class
+            | NodeKind::Struct
+            | NodeKind::Interface
+            | NodeKind::Trait
+            | NodeKind::Protocol
+            | NodeKind::Enum
+    ) {
+        own.push(caller.name.as_str());
+    }
+    own
 }
 
 /// Name of the type / namespace declaring `node` (`Report` for

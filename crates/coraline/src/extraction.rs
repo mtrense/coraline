@@ -588,7 +588,7 @@ fn extract_nodes(
     walk_tree_calls(
         tree.root_node(),
         source,
-        file_path,
+        root_id,
         language,
         &symbol_index,
         &mut edges,
@@ -632,6 +632,7 @@ fn language_to_parser(language: Language) -> Option<tree_sitter::Language> {
 #[derive(Debug, Default)]
 struct SymbolIndex {
     by_name: HashMap<String, Vec<String>>,
+    /// Call scopes (callables and types) by `node_key`.
     by_key: HashMap<String, String>,
     callable_ids: HashSet<String>,
     /// Enclosing type / namespace names per callable id, outermost first.
@@ -838,6 +839,9 @@ fn walk_tree_collect(
                 .push(id.clone());
             symbol_index.callable_ids.insert(id.clone());
             symbol_index.containers.insert(id.clone(), stack.clone());
+        } else if is_type_scope_kind(kind) {
+            let key = node_key(kind, start, &name);
+            symbol_index.by_key.insert(key, id.clone());
         }
 
         if let Some(parent_id) = parent_id.clone() {
@@ -906,10 +910,14 @@ fn walk_tree_collect(
     }
 }
 
+/// Record calls. A call's source is the innermost enclosing function or
+/// method; calls outside any (property initializers, Kotlin `init {}` and
+/// getters, class-field arrow functions, top-level script code) go to the
+/// innermost enclosing type, else to the file node `root_id`.
 fn walk_tree_calls(
     node: TsNode,
     source: &str,
-    _file_path: &str,
+    root_id: &str,
     language: Language,
     symbol_index: &SymbolIndex,
     edges: &mut Vec<Edge>,
@@ -923,57 +931,58 @@ fn walk_tree_calls(
         None
     };
 
-    if let (Some(kind), Some(name)) = (kind, name.clone()) {
-        if is_callable_kind(kind) {
+    let scope_id = match (kind, name) {
+        (Some(kind), Some(name)) if is_callable_kind(kind) || is_type_scope_kind(kind) => {
             let key = node_key(kind, node.start_position(), &name);
-            if let Some(id) = symbol_index.by_key.get(&key) {
-                scope_stack.push(id.clone());
-            }
+            symbol_index.by_key.get(&key).cloned()
         }
+        _ => None,
+    };
+    let pushed = scope_id.is_some();
+    if let Some(id) = scope_id {
+        scope_stack.push(id);
     }
 
     // Ruby `require` calls are imports.
     if kind != Some(NodeKind::Import) && is_call_expression(node.kind(), language) {
-        if let Some(source_id) = scope_stack.last() {
-            if let Some(callee_name) = call_name(&node, source, language) {
-                let start = node.start_position();
-                let qualifier = call_qualifier(&node, source, language);
-                match same_file_targets(symbol_index, &callee_name, qualifier.as_deref(), language)
-                {
-                    Some(targets) if targets.len() == 1 => {
-                        edges.push(Edge {
-                            source: source_id.clone(),
-                            target: targets[0].clone(),
-                            kind: EdgeKind::Calls,
-                            metadata: None,
-                            line: Some(start.row as i64 + 1),
-                            column: Some(start.column as i64),
-                            confidence: 1.0,
-                            process_id: None,
-                        });
-                    }
-                    Some(targets) => {
-                        unresolved_refs.push(UnresolvedReference {
-                            from_node_id: source_id.clone(),
-                            reference_name: callee_name.clone(),
-                            reference_kind: EdgeKind::Calls,
-                            line: start.row as i64 + 1,
-                            column: start.column as i64,
-                            candidates: Some(targets.clone()),
-                            qualifier,
-                        });
-                    }
-                    None => {
-                        unresolved_refs.push(UnresolvedReference {
-                            from_node_id: source_id.clone(),
-                            reference_name: callee_name.clone(),
-                            reference_kind: EdgeKind::Calls,
-                            line: start.row as i64 + 1,
-                            column: start.column as i64,
-                            candidates: None,
-                            qualifier,
-                        });
-                    }
+        let source_id = scope_stack.last().map_or(root_id, String::as_str);
+        if let Some(callee_name) = call_name(&node, source, language) {
+            let start = node.start_position();
+            let qualifier = call_qualifier(&node, source, language);
+            match same_file_targets(symbol_index, &callee_name, qualifier.as_deref(), language) {
+                Some(targets) if targets.len() == 1 => {
+                    edges.push(Edge {
+                        source: source_id.to_string(),
+                        target: targets[0].clone(),
+                        kind: EdgeKind::Calls,
+                        metadata: None,
+                        line: Some(start.row as i64 + 1),
+                        column: Some(start.column as i64),
+                        confidence: 1.0,
+                        process_id: None,
+                    });
+                }
+                Some(targets) => {
+                    unresolved_refs.push(UnresolvedReference {
+                        from_node_id: source_id.to_string(),
+                        reference_name: callee_name.clone(),
+                        reference_kind: EdgeKind::Calls,
+                        line: start.row as i64 + 1,
+                        column: start.column as i64,
+                        candidates: Some(targets.clone()),
+                        qualifier,
+                    });
+                }
+                None => {
+                    unresolved_refs.push(UnresolvedReference {
+                        from_node_id: source_id.to_string(),
+                        reference_name: callee_name.clone(),
+                        reference_kind: EdgeKind::Calls,
+                        line: start.row as i64 + 1,
+                        column: start.column as i64,
+                        candidates: None,
+                        qualifier,
+                    });
                 }
             }
         }
@@ -983,7 +992,7 @@ fn walk_tree_calls(
         walk_tree_calls(
             child,
             source,
-            _file_path,
+            root_id,
             language,
             symbol_index,
             edges,
@@ -992,13 +1001,8 @@ fn walk_tree_calls(
         );
     }
 
-    if let (Some(kind), Some(name)) = (kind, name) {
-        if is_callable_kind(kind) {
-            let key = node_key(kind, node.start_position(), &name);
-            if symbol_index.by_key.contains_key(&key) {
-                scope_stack.pop();
-            }
-        }
+    if pushed {
+        scope_stack.pop();
     }
 }
 
@@ -2191,6 +2195,19 @@ fn node_key(kind: NodeKind, start: tree_sitter::Point, name: &str) -> String {
 
 fn is_callable_kind(kind: NodeKind) -> bool {
     matches!(kind, NodeKind::Function | NodeKind::Method)
+}
+
+/// Types that own calls made outside their methods (initializers, `init {}`).
+fn is_type_scope_kind(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Class
+            | NodeKind::Struct
+            | NodeKind::Interface
+            | NodeKind::Trait
+            | NodeKind::Protocol
+            | NodeKind::Enum
+    )
 }
 
 /// Call-expression node kinds per language.
