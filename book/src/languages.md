@@ -9,7 +9,7 @@ Coraline uses [tree-sitter](https://tree-sitter.github.io/) for parsing, enablin
 | **C** | ✅ Full | `tree-sitter-c` 0.23 | - |
 | **C++** | ✅ Full | `tree-sitter-cpp` 0.23 | - |
 | **C#** | ✅ Full | `tree-sitter-c-sharp` 0.23 | .NET |
-| **Blazor** | ✅ Full | `tree-sitter-blazor` 0.1.1 (custom) | Blazor components |
+| **Blazor** | ⚠️ File-level only (no symbols) | - | Blazor components |
 | **Go** | ✅ Full | `tree-sitter-go` 0.23 | - |
 | **Java** | ✅ Full | `tree-sitter-java` 0.23 | Spring |
 | **JavaScript** | ✅ Full | `tree-sitter-javascript` 0.25.0 | Node.js |

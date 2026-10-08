@@ -51,7 +51,6 @@ tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-ruby = "0.23"
-tree-sitter-blazor = { version = "0.3.1", path = "../tree-sitter-blazor" }
 
 # Additional language parsers
 tree-sitter-markdown-updated = "0.1.0"  # Replaces tree-sitter-markdown-fork — ikatyang/tree-sitter-markdown#61 is still open (dyld SYM_EXT_AUT_LNK_BGN assertion on macOS 26.x); this fork ships a working grammar

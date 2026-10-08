@@ -610,17 +610,16 @@ fn language_to_parser(language: Language) -> Option<tree_sitter::Language> {
         Language::Java => Some(tree_sitter::Language::new(tree_sitter_java::LANGUAGE)),
         Language::C => Some(tree_sitter::Language::new(tree_sitter_c::LANGUAGE)),
         Language::Cpp => Some(tree_sitter::Language::new(tree_sitter_cpp::LANGUAGE)),
-        Language::CSharp | Language::Blazor => {
-            // Use C# parser for both C# and Blazor files
-            Some(tree_sitter::Language::new(tree_sitter_c_sharp::LANGUAGE))
-        }
+        Language::CSharp => Some(tree_sitter::Language::new(tree_sitter_c_sharp::LANGUAGE)),
         Language::Ruby => Some(tree_sitter::Language::new(tree_sitter_ruby::LANGUAGE)),
         Language::Php => Some(tree_sitter::Language::new(tree_sitter_php::LANGUAGE_PHP)),
         Language::Swift => Some(tree_sitter::Language::new(tree_sitter_swift::LANGUAGE)),
         Language::Kotlin => Some(tree_sitter::Language::new(tree_sitter_kotlin_ng::LANGUAGE)),
         Language::Markdown => Some(tree_sitter_markdown_updated::language()),
         // Unsupported languages (see `config::is_language_supported`) and
-        // languages without a tree-sitter grammar.
+        // languages without a tree-sitter grammar. Blazor (`.razor`) is
+        // indexed at file level only: it is Razor markup, not C#, so the C#
+        // grammar yields only ERROR nodes.
         _ => None,
     }
 }
@@ -648,7 +647,7 @@ struct SymbolIndex {
 ///   `(Visibility::Internal, false)`; missing modifier is `None`.
 /// - **TypeScript / JavaScript** — walks ancestors for
 ///   `export_statement`. Maps to `(Visibility::Public, true)`.
-/// - **Java / C# / Blazor** — walks children for a `modifiers` node
+/// - **Java / C#** — walks children for a `modifiers` node
 ///   containing `public`. Maps to `(Visibility::Public, true)`.
 ///
 /// Languages without a keyword-based visibility concept (Python,
@@ -691,7 +690,7 @@ fn read_declaration_visibility(
                 current = parent;
             }
         }
-        Language::Java | Language::CSharp | Language::Blazor => {
+        Language::Java | Language::CSharp => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "modifiers" {
@@ -2274,13 +2273,6 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("type_alias", NodeKind::TypeAlias, false),
             ("package_header", NodeKind::Module, false),
             ("import", NodeKind::Import, false),
-        ],
-
-        // === Blazor ===
-        Language::Blazor => &[
-            ("element", NodeKind::Component, true),
-            ("component_definition", NodeKind::Component, true),
-            ("method_definition", NodeKind::Method, false),
         ],
 
         // Markup and unsupported languages: no extraction

@@ -95,7 +95,7 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
         ),
         Language::Python => (&[], &["name", "alias"]),
         Language::Go => (&[], &["alias"]),
-        Language::Java | Language::CSharp | Language::Blazor => (&["modifiers"], &[]),
+        Language::Java | Language::CSharp => (&["modifiers"], &[]),
         // kotlin_callee, import_module_path, kotlin_node_name
         Language::Kotlin => (
             &[
@@ -210,13 +210,6 @@ fn known_bad(language: Language) -> &'static [&'static str] {
         Language::Go => &["field:import_spec"],
         Language::Rust => &["field:visibility_modifier", "kind:use_item"],
         Language::CSharp => &["field:qualified_name", "kind:modifiers"],
-        // Blazor is parsed with the C# grammar (see `language_to_parser`).
-        Language::Blazor => &[
-            "kind:component_definition",
-            "kind:element",
-            "kind:method_definition",
-            "kind:modifiers",
-        ],
         _ => &[],
     }
 }
