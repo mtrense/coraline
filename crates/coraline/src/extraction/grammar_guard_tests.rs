@@ -1,0 +1,230 @@
+//! Grammar guard: every node kind and field name the extractor relies on must
+//! exist in the tree-sitter grammar of the language it is used for.
+//!
+//! A misspelt or outdated kind/field name fails silently at runtime (the node
+//! is simply never matched), which is how whole edge categories went missing
+//! for Kotlin, Java, Swift, Go, ... This test turns such mistakes into a test
+//! failure.
+//!
+//! Checks are grammar-global: `field_id_for_name` only tells whether a field
+//! exists *somewhere* in the grammar, not on a specific node kind.
+//!
+//! `known_bad` is a temporary allowlist of names that are currently wrong. The
+//! test asserts the detected set equals the allowlist exactly, so:
+//! - fixing a mapping requires removing its entry from the allowlist, and
+//! - introducing a new bad name fails the test.
+//!
+//! Goal: shrink every allowlist entry to empty, then delete `known_bad`.
+
+use std::collections::BTreeSet;
+
+use super::{
+    call_expression_kinds, call_name_fields, import_path_field, language_to_parser,
+    node_kind_mappings,
+};
+use crate::config::is_language_supported;
+use crate::types::{Language, NodeKind};
+
+const ALL_LANGUAGES: &[Language] = &[
+    Language::TypeScript,
+    Language::JavaScript,
+    Language::Tsx,
+    Language::Jsx,
+    Language::Python,
+    Language::Go,
+    Language::Rust,
+    Language::Java,
+    Language::C,
+    Language::Cpp,
+    Language::CSharp,
+    Language::Php,
+    Language::Ruby,
+    Language::Swift,
+    Language::Kotlin,
+    Language::Liquid,
+    Language::Blazor,
+    Language::Bash,
+    Language::Dart,
+    Language::Elixir,
+    Language::Elm,
+    Language::Erlang,
+    Language::Fortran,
+    Language::Groovy,
+    Language::Haskell,
+    Language::Julia,
+    Language::Lua,
+    Language::Markdown,
+    Language::Matlab,
+    Language::Nix,
+    Language::Perl,
+    Language::Powershell,
+    Language::R,
+    Language::Scala,
+    Language::Toml,
+    Language::Yaml,
+    Language::Zig,
+    Language::Unknown,
+];
+
+/// Kinds and fields referenced by language-specific helper code (visibility,
+/// import/export symbol collection, module names) rather than by the mapping
+/// tables. Keep in sync with the string literals in `extraction.rs`.
+fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'static str]) {
+    match language {
+        Language::Rust => (
+            &["visibility_modifier"],
+            // read_declaration_visibility, rust_use_alias, rust_use_path, module_name
+            &["visibility_modifier", "alias", "path", "name"],
+        ),
+        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => (
+            &[
+                "export_statement",
+                "import_clause",
+                "namespace_import",
+                "named_imports",
+                "import_specifier",
+                "export_specifier",
+                "function_declaration",
+                "class_declaration",
+                "interface_declaration",
+                "type_alias_declaration",
+                "enum_declaration",
+                "variable_declarator",
+            ],
+            &["name", "alias", "source"],
+        ),
+        Language::Python => (&[], &["name", "alias"]),
+        Language::Go => (&[], &["alias"]),
+        Language::Java | Language::CSharp | Language::Blazor => (&["modifiers"], &[]),
+        _ => (&[], &[]),
+    }
+}
+
+/// Languages whose mapping tables are shared. A name counts as valid if it
+/// exists in any grammar of the group (e.g. `interface_declaration` is
+/// TypeScript-only but harmless in the shared JS/TS table).
+fn grammar_group(language: Language) -> Vec<Language> {
+    match language {
+        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
+            vec![Language::JavaScript, Language::TypeScript, Language::Tsx]
+        }
+        other => vec![other],
+    }
+}
+
+/// Temporary allowlist of names known not to exist in the grammar.
+/// Entries are `"kind:<name>"` or `"field:<name>"`. Remove entries as the
+/// corresponding mappings get fixed (see plan §2/§3).
+fn known_bad(language: Language) -> &'static [&'static str] {
+    match language {
+        Language::JavaScript | Language::Jsx | Language::TypeScript | Language::Tsx => {
+            &["field:callee", "kind:export_declaration"]
+        }
+        Language::Go => &["field:import_spec"],
+        Language::Rust => &["field:visibility_modifier", "kind:use_item"],
+        Language::Java => &["field:method"],
+        Language::C => &["kind:preproc_define"],
+        Language::Cpp => &[
+            "kind:method_definition",
+            "kind:namespace",
+            "kind:preproc_define",
+        ],
+        Language::CSharp => &["field:qualified_name", "kind:modifiers"],
+        Language::Ruby => &["kind:def", "kind:method_call"],
+        Language::Swift => &[
+            "field:function",
+            "field:module_name",
+            "kind:enum_declaration",
+            "kind:extension_declaration",
+            "kind:function_call_expression",
+            "kind:struct_declaration",
+        ],
+        Language::Kotlin => &[
+            "field:callee",
+            "kind:import_alias",
+            "kind:interface_declaration",
+        ],
+        // Blazor is parsed with the C# grammar (see `language_to_parser`).
+        Language::Blazor => &[
+            "kind:component_definition",
+            "kind:element",
+            "kind:method_definition",
+            "kind:modifiers",
+        ],
+        _ => &[],
+    }
+}
+
+fn bad_names(language: Language) -> BTreeSet<String> {
+    let grammars: Vec<tree_sitter::Language> = grammar_group(language)
+        .into_iter()
+        .filter_map(language_to_parser)
+        .collect();
+    let kind_exists = |kind: &str| grammars.iter().any(|g| g.id_for_node_kind(kind, true) != 0);
+    let field_exists = |field: &str| {
+        grammars
+            .iter()
+            .any(|g| g.field_id_for_name(field).is_some())
+    };
+
+    let mappings = node_kind_mappings(language);
+    let (helper_kinds, helper_fields) = helper_names(language);
+
+    let kinds = mappings
+        .iter()
+        .map(|(kind, _, _)| *kind)
+        .chain(call_expression_kinds(language).iter().copied())
+        .chain(helper_kinds.iter().copied());
+
+    let has_imports = mappings
+        .iter()
+        .any(|(_, node_kind, _)| *node_kind == NodeKind::Import);
+    let import_field = has_imports.then(|| import_path_field(language));
+    let fields = call_name_fields(language)
+        .iter()
+        .copied()
+        .chain(import_field)
+        .chain(helper_fields.iter().copied());
+
+    kinds
+        .filter(|kind| !kind_exists(kind))
+        .map(|kind| format!("kind:{kind}"))
+        .chain(
+            fields
+                .filter(|field| !field_exists(field))
+                .map(|field| format!("field:{field}")),
+        )
+        .collect()
+}
+
+#[test]
+fn extraction_names_exist_in_grammars() {
+    let mut failures = Vec::new();
+
+    for &language in ALL_LANGUAGES {
+        if !is_language_supported(&language) || language_to_parser(language).is_none() {
+            continue;
+        }
+
+        let actual = bad_names(language);
+        let allowed: BTreeSet<String> = known_bad(language)
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+
+        let new_bad: Vec<_> = actual.difference(&allowed).collect();
+        let fixed: Vec<_> = allowed.difference(&actual).collect();
+        if !new_bad.is_empty() {
+            failures.push(format!(
+                "{language:?}: names missing from grammar (fix the mapping): {new_bad:?}"
+            ));
+        }
+        if !fixed.is_empty() {
+            failures.push(format!(
+                "{language:?}: allowlisted names now valid or unused (remove from known_bad): {fixed:?}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
