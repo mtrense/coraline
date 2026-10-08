@@ -103,6 +103,9 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
                 "navigation_expression",
                 "qualified_identifier",
                 "variable_declaration",
+                // kotlin_class_kind
+                "modifiers",
+                "class_modifier",
             ],
             &[],
         ),

@@ -703,7 +703,7 @@ fn walk_tree_collect(
     symbol_index: &mut SymbolIndex,
     now_ms: i64,
 ) {
-    let (kind, is_container) = node_kind(&node, language);
+    let (kind, is_container) = node_kind(&node, source, language);
 
     if let Some(NodeKind::Import) = kind {
         if let Some(parent_id) = parent_id.clone() {
@@ -883,7 +883,7 @@ fn walk_tree_calls(
     unresolved_refs: &mut Vec<UnresolvedReference>,
     scope_stack: &mut Vec<String>,
 ) {
-    let (kind, _) = node_kind(&node, language);
+    let (kind, _) = node_kind(&node, source, language);
     let name = if kind.is_some() {
         node_name(&node, source, language)
     } else {
@@ -993,6 +993,7 @@ fn kotlin_node_name(node: &TsNode, source: &str) -> Option<String> {
         // no single name and are skipped.
         "property_declaration" => child_of_kind(node, "variable_declaration")
             .and_then(|decl| child_of_kind(&decl, "identifier"))?,
+        "enum_entry" => child_of_kind(node, "identifier")?,
         _ => return None,
     };
     name_node
@@ -2016,7 +2017,7 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("property_declaration", NodeKind::Property, false),
             ("class_declaration", NodeKind::Class, true),
             ("object_declaration", NodeKind::Class, true),
-            ("enum_class_body", NodeKind::Enum, true),
+            ("enum_entry", NodeKind::EnumMember, false),
             ("import", NodeKind::Import, false),
         ],
 
@@ -2044,23 +2045,32 @@ fn map_node_kind(kind: &str, language: Language) -> (Option<NodeKind>, bool) {
 /// Map a tree-sitter node to a `NodeKind`, refining the kind-only mapping
 /// with node context where the grammar shares one node kind between several
 /// declaration kinds.
-fn node_kind(node: &TsNode, language: Language) -> (Option<NodeKind>, bool) {
+fn node_kind(node: &TsNode, source: &str, language: Language) -> (Option<NodeKind>, bool) {
     let mapped = map_node_kind(node.kind(), language);
     match (language, mapped) {
         (Language::Kotlin, (Some(NodeKind::Class), container))
             if node.kind() == "class_declaration" =>
         {
-            (Some(kotlin_class_kind(node)), container)
+            (Some(kotlin_class_kind(node, source)), container)
         }
         _ => mapped,
     }
 }
 
-/// Kotlin `class_declaration` covers classes and interfaces (`interface`
-/// keyword child).
-fn kotlin_class_kind(node: &TsNode) -> NodeKind {
+/// Kotlin `class_declaration` covers classes, interfaces (`interface`
+/// keyword child) and enums (`enum` class modifier).
+fn kotlin_class_kind(node: &TsNode, source: &str) -> NodeKind {
     if child_of_kind(node, "interface").is_some() {
-        NodeKind::Interface
+        return NodeKind::Interface;
+    }
+    let is_enum = child_of_kind(node, "modifiers").is_some_and(|modifiers| {
+        modifiers
+            .children(&mut modifiers.walk())
+            .filter(|m| m.kind() == "class_modifier")
+            .any(|m| m.utf8_text(source.as_bytes()) == Ok("enum"))
+    });
+    if is_enum {
+        NodeKind::Enum
     } else {
         NodeKind::Class
     }

@@ -204,3 +204,31 @@ fn kotlin_interfaces_are_extracted() {
     );
     assert!(!nodes.contains("class:Named"), "{nodes:#?}");
 }
+
+#[test]
+fn kotlin_enums_and_entries_are_extracted() {
+    let temp = index_project(&[(
+        "src/Main.kt",
+        "enum class Color(val rgb: Int) {\n\
+         \x20   RED(1), GREEN(2);\n\
+         \x20   fun hex(): String = \"x\"\n\
+         }\n\
+         \n\
+         enum class Plain { A, B }\n",
+    )]);
+
+    let nodes = node_set(temp.path());
+    assert_contains_all(
+        &nodes,
+        &[
+            "enum:Color",
+            "enum_member:RED",
+            "enum_member:GREEN",
+            "function:hex",
+            "enum:Plain",
+            "enum_member:A",
+            "enum_member:B",
+        ],
+    );
+    assert!(!nodes.contains("class:Color"), "{nodes:#?}");
+}
