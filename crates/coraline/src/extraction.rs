@@ -1201,6 +1201,9 @@ fn add_import_nodes(
 }
 
 fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<ImportSymbol> {
+    if language == Language::Php {
+        return php_import_symbols(node, source);
+    }
     let Some(module_path) = import_module_path(node, source, language) else {
         return Vec::new();
     };
@@ -1335,20 +1338,6 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
             }]
         }
 
-        // === PHP ===
-        Language::Php => {
-            let last_part = module_path
-                .rsplit('\\')
-                .next()
-                .unwrap_or(&module_path)
-                .to_string();
-            vec![ImportSymbol {
-                local_name: last_part.clone(),
-                module_path,
-                export_name: Some(last_part),
-            }]
-        }
-
         // === Ruby ===
         Language::Ruby => {
             let name = module_path
@@ -1407,6 +1396,43 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
     }
 }
 
+/// Imports of a PHP `namespace_use_declaration`: `use A\B;`,
+/// `use A\B as C, D\E;`, `use function A\f;` and group uses
+/// `use A\{B, C as D};` (prefix is a `namespace_name` child of the
+/// declaration, clauses sit in the `body` group).
+fn php_import_symbols(node: &TsNode, source: &str) -> Vec<ImportSymbol> {
+    let text = |n: TsNode| n.utf8_text(source.as_bytes()).ok().map(str::to_string);
+    let prefix = child_of_kind(node, "namespace_name").and_then(text);
+    let clauses = node.child_by_field_name("body").unwrap_or(*node);
+
+    clauses
+        .named_children(&mut clauses.walk())
+        .filter(|c| c.kind() == "namespace_use_clause")
+        .filter_map(|clause| {
+            let path = clause
+                .named_children(&mut clause.walk())
+                .find(|c| matches!(c.kind(), "qualified_name" | "name"))
+                .and_then(text)?;
+            let path = path.trim_start_matches('\\');
+            let module_path = match &prefix {
+                Some(prefix) => format!("{}\\{path}", prefix.trim_start_matches('\\')),
+                None => path.to_string(),
+            };
+            let last_part = module_path
+                .rsplit('\\')
+                .next()
+                .unwrap_or(&module_path)
+                .to_string();
+            let alias = clause.child_by_field_name("alias").and_then(text);
+            Some(ImportSymbol {
+                local_name: alias.unwrap_or_else(|| last_part.clone()),
+                module_path,
+                export_name: Some(last_part),
+            })
+        })
+        .collect()
+}
+
 /// Field name holding the module path of an import declaration, if the
 /// grammar exposes one (see `import_module_path` for field-less grammars).
 ///
@@ -1423,7 +1449,8 @@ fn import_path_field(language: Language) -> Option<&'static str> {
         Language::Java => Some("name"),
         Language::C | Language::Cpp => Some("path"),
         Language::CSharp => Some("qualified_name"),
-        Language::Php => Some("name"),
+        // PHP `namespace_use_declaration` has no path field; see `php_import_symbols`.
+        Language::Php => None,
         Language::Ruby => Some("argument"),
         // Swift `import_declaration` has no fields; the path is an `identifier` child.
         Language::Swift => None,
@@ -1921,8 +1948,15 @@ fn call_expression_kinds(language: Language) -> &'static [&'static str] {
         Language::C | Language::Cpp => &["call_expression"],
         // C#
         Language::CSharp => &["invocation_expression"],
-        // PHP
-        Language::Php => &["function_call_expression", "member_call_expression"],
+        // PHP: `f()`, `$o->m()`, `$o?->m()`, `C::m()` and `new C()` (recorded
+        // as a call to `C`)
+        Language::Php => &[
+            "function_call_expression",
+            "member_call_expression",
+            "nullsafe_member_call_expression",
+            "scoped_call_expression",
+            "object_creation_expression",
+        ],
         // Ruby: `call` covers `recv.m(...)`, `m(...)` and `Foo.new` (recorded
         // as a call to `Foo`). Bare `m` without receiver or parentheses is an
         // `identifier`, indistinguishable from a local variable, and is skipped.
@@ -1956,7 +1990,8 @@ fn call_name_fields(language: Language) -> &'static [&'static str] {
         Language::Java => &["name", "type"],
         Language::C | Language::Cpp => &["function"],
         Language::CSharp => &["function"],
-        Language::Php => &["function"],
+        // `function_call_expression` → `function`; member/scoped calls → `name`
+        Language::Php => &["function", "name"],
         Language::Ruby => &["method"],
         // Kotlin and Swift `call_expression` have no fields; see
         // `kotlin_callee` / `swift_callee`.
@@ -2021,12 +2056,32 @@ fn ruby_callee<'tree>(node: &TsNode<'tree>, source: &str) -> Option<TsNode<'tree
     Some(method)
 }
 
+/// Callee of a PHP call. Namespaced names (`\App\fmt()`, `new \App\Foo()`)
+/// are reduced to their last segment; `new` has no fields, the class is a
+/// `name` / `qualified_name` child.
+fn php_callee<'tree>(node: &TsNode<'tree>) -> Option<TsNode<'tree>> {
+    let callee = if node.kind() == "object_creation_expression" {
+        node.named_children(&mut node.walk())
+            .find(|c| matches!(c.kind(), "name" | "qualified_name"))?
+    } else {
+        call_name_fields(Language::Php)
+            .iter()
+            .find_map(|field| node.child_by_field_name(field))?
+    };
+    match callee.kind() {
+        "name" => Some(callee),
+        "qualified_name" => child_of_kind(&callee, "name"),
+        _ => None,
+    }
+}
+
 fn call_name(node: &TsNode, source: &str, language: Language) -> Option<String> {
     let mut callee = match language {
         Language::Kotlin => kotlin_callee(node)?,
         Language::Swift => swift_callee(node)?,
         Language::Ruby => ruby_callee(node, source)?,
         Language::C | Language::Cpp => c_callee(node)?,
+        Language::Php => php_callee(node)?,
         _ => call_name_fields(language)
             .iter()
             .find_map(|field| node.child_by_field_name(field))?,
@@ -2181,7 +2236,8 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("namespace_definition", NodeKind::Namespace, true),
             ("property_declaration", NodeKind::Property, false),
             ("const_declaration", NodeKind::Constant, false),
-            ("use_declaration", NodeKind::Import, false),
+            // `use A\B;` (`use_declaration` is a trait use inside a class)
+            ("namespace_use_declaration", NodeKind::Import, false),
         ],
 
         // === Ruby ===

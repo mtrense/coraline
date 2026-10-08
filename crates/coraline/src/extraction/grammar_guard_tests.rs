@@ -167,6 +167,17 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["declarator", "name", "function", "field"],
         ),
+        // php_callee, php_import_symbols
+        Language::Php => (
+            &[
+                "object_creation_expression",
+                "name",
+                "qualified_name",
+                "namespace_name",
+                "namespace_use_clause",
+            ],
+            &["body", "alias"],
+        ),
         // ruby_callee
         Language::Ruby => (
             &["constant", "scope_resolution"],
