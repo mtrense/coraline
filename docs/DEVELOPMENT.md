@@ -100,7 +100,7 @@ coraline/
 | `tests/<lang>_extraction_test.rs` | - | Integration: per-language extraction (nodes, calls, imports), helpers in `tests/common/mod.rs` |
 | `tests/edge_fixture_test.rs` | 6 (2 ignored) | Integration: per-language multi-directory project, stored same-file / same-dir / cross-dir `Calls` and `Imports` edges + `coraline_callers` / `coraline_callees`; ignored tests hold Extends/Implements/Instantiates expectations not implemented yet |
 | `tests/resolver_test.rs` | - | Integration: `Calls` resolution through imports, packages, Ruby requires and Swift modules, qualifier / receiver filtering, overloads and ambiguous calls; unrelated dirs with same-named functions and no import must stay unlinked (upstream #43) |
-| `tests/pipeline_test.rs` | - | Integration: resolver pages through all unresolved refs (>10k unresolvable refs don't starve later ones) |
+| `tests/pipeline_test.rs` | - | Integration: resolver pages through all unresolved refs (>10k unresolvable refs don't starve later ones); edges into a re-indexed file survive sync / incremental index |
 | `tests/graph_test.rs` | 4 | Integration: graph traversal |
 | `tests/context_test.rs` | 5 | Integration: context building |
 

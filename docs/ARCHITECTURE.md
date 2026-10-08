@@ -195,7 +195,7 @@ The SQLite database (`.coraline/coraline.db`) has these tables:
 | `vectors`         | Optional embeddings storage. `embedding BLOB` (v1) or vec0 `vec0` virtual table (`--features vec-ext`)                                                       |
 | `schema_versions` | Additive-migration bookkeeping. Every additive `ALTER TABLE` bumps a version row here.                                                                       |
 
-A `files` table tracks content hashes for incremental sync. An `unresolved_refs` table holds references that couldn't be resolved during extraction, to be retried on full resolution passes.
+A `files` table tracks content hashes for incremental sync. An `unresolved_refs` table holds references that couldn't be resolved during extraction; every resolution pass pages through all of them by id, and refs that resolve are deleted. Before a file's nodes are deleted (re-index or removal), resolved edges from other files into it are queued again as unresolved refs (the call-site name and qualifier are kept in the edge's `metadata`), so they re-link to the re-indexed target.
 
 ### Additive migrations
 

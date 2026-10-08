@@ -198,15 +198,38 @@ fn reference_edges(
         .into_iter()
         .map(|target| Edge {
             source: reference.from_node_id.clone(),
+            metadata: requeue_metadata(reference, &target.name),
             target: target.id,
             kind: reference.reference_kind,
-            metadata: None,
             line: Some(reference.line),
             column: Some(reference.column),
             confidence,
             process_id: None,
         })
         .collect()
+}
+
+/// What `db::delete_file` needs to queue the ref again when the target's
+/// file is re-indexed: the name written at the call site (if it differs
+/// from the target's) and the qualifier.
+fn requeue_metadata(
+    reference: &UnresolvedReference,
+    target_name: &str,
+) -> Option<HashMap<String, serde_json::Value>> {
+    let mut metadata = HashMap::new();
+    if reference.reference_name != target_name {
+        metadata.insert(
+            db::EDGE_META_REFERENCE.to_string(),
+            serde_json::Value::from(reference.reference_name.as_str()),
+        );
+    }
+    if let Some(qualifier) = &reference.qualifier {
+        metadata.insert(
+            db::EDGE_META_QUALIFIER.to_string(),
+            serde_json::Value::from(qualifier.as_str()),
+        );
+    }
+    (!metadata.is_empty()).then_some(metadata)
 }
 
 /// Most equally ranked call targets linked at once; more means the name

@@ -855,13 +855,128 @@ pub fn delete_unresolved_refs(conn: &mut Connection, ids: &[i64]) -> std::io::Re
     tx.commit().map_err(io_other)
 }
 
+/// Edge metadata key: the name written at the reference site, when it
+/// differs from the target's name (`t()` after `import { target as t }`).
+pub const EDGE_META_REFERENCE: &str = "reference";
+/// Edge metadata key: the reference's qualifier (`model` in
+/// `model.Describe()`).
+pub const EDGE_META_QUALIFIER: &str = "qualifier";
+
+/// Delete a file's nodes (cascading to their edges and refs) and its record.
+///
+/// Resolved edges from other files into this file would be lost with the
+/// nodes, and their refs were deleted when they resolved. They are queued
+/// again as unresolved refs first, so the next resolver run links them to
+/// the re-indexed (or moved) target.
 pub fn delete_file(conn: &mut Connection, path: &str) -> std::io::Result<()> {
     let tx = conn.transaction().map_err(io_other)?;
+    requeue_incoming_refs(&tx, path)?;
     tx.execute("DELETE FROM nodes WHERE file_path = ?", params![path])
         .map_err(io_other)?;
     tx.execute("DELETE FROM files WHERE path = ?", params![path])
         .map_err(io_other)?;
     tx.commit().map_err(io_other)
+}
+
+/// Turn edges from other files into `path` back into unresolved refs and
+/// drop their sibling edges (same ref linked to several targets), which the
+/// resolver re-creates.
+fn requeue_incoming_refs(tx: &Transaction<'_>, path: &str) -> std::io::Result<()> {
+    let mut refs: Vec<UnresolvedReference> = Vec::new();
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT e.source, e.kind, COALESCE(e.line, 0), COALESCE(e.col, 0),
+                        e.metadata, t.name
+                   FROM edges e
+                   JOIN nodes t ON t.id = e.target
+                   JOIN nodes s ON s.id = e.source
+                  WHERE t.file_path = ?1 AND s.file_path != ?1
+                  ORDER BY e.id",
+            )
+            .map_err(io_other)?;
+        let rows = stmt
+            .query_map(params![path], |row| {
+                let kind: String = row.get(1)?;
+                let metadata: Option<String> = row.get(4)?;
+                let target_name: String = row.get(5)?;
+                let metadata: Option<serde_json::Map<String, serde_json::Value>> =
+                    metadata.and_then(|raw| serde_json::from_str(&raw).ok());
+                let meta_str = |key: &str| {
+                    metadata
+                        .as_ref()
+                        .and_then(|m| m.get(key))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                };
+                Ok(UnresolvedReference {
+                    from_node_id: row.get(0)?,
+                    reference_name: meta_str(EDGE_META_REFERENCE).unwrap_or(target_name),
+                    reference_kind: parse_edge_kind(&kind),
+                    line: row.get(2)?,
+                    column: row.get(3)?,
+                    candidates: None,
+                    qualifier: meta_str(EDGE_META_QUALIFIER),
+                })
+            })
+            .map_err(io_other)?;
+        for row in rows {
+            let reference = row.map_err(io_other)?;
+            let duplicate = refs.iter().any(|r| {
+                r.from_node_id == reference.from_node_id
+                    && r.reference_kind == reference.reference_kind
+                    && r.line == reference.line
+                    && r.column == reference.column
+                    && r.reference_name == reference.reference_name
+            });
+            if !duplicate {
+                refs.push(reference);
+            }
+        }
+    }
+    if refs.is_empty() {
+        return Ok(());
+    }
+
+    let mut drop_siblings = tx
+        .prepare(
+            "DELETE FROM edges
+              WHERE source = ?1 AND kind = ?2 AND COALESCE(line, 0) = ?3
+                AND COALESCE(col, 0) = ?4
+                AND target NOT IN (SELECT id FROM nodes WHERE file_path = ?5)",
+        )
+        .map_err(io_other)?;
+    let mut insert = tx
+        .prepare(
+            "INSERT INTO unresolved_refs (
+                from_node_id, reference_name, reference_kind, line, col, candidates, qualifier
+             ) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+        )
+        .map_err(io_other)?;
+    for reference in &refs {
+        let kind = edge_kind_to_string(reference.reference_kind);
+        drop_siblings
+            .execute(params![
+                reference.from_node_id,
+                kind,
+                reference.line,
+                reference.column,
+                path
+            ])
+            .map_err(io_other)?;
+        insert
+            .execute(params![
+                reference.from_node_id,
+                reference.reference_name,
+                kind,
+                reference.line,
+                reference.column,
+                reference.qualifier,
+            ])
+            .map_err(io_other)?;
+    }
+    debug!(file = path, refs = refs.len(), "re-queued incoming refs");
+    Ok(())
 }
 
 /// Get all nodes belonging to a specific file, optionally filtered by kind.
