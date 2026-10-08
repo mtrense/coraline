@@ -116,8 +116,12 @@ fn helper_names(language: Language) -> (&'static [&'static str], &'static [&'sta
             ],
             &["path", "name", "field", "operand", "type", "function"],
         ),
-        // read_declaration_visibility, call_qualifier
-        Language::Java => (&["modifiers"], &["object"]),
+        // read_declaration_visibility, call_qualifier, import_symbols,
+        // module_name
+        Language::Java => (
+            &["modifiers", "asterisk", "scoped_identifier", "identifier"],
+            &["object"],
+        ),
         // read_declaration_visibility, csharp_using_symbols
         Language::CSharp => (
             &[

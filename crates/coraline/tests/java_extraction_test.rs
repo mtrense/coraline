@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{assert_contains_all, call_pairs, index_project};
+use common::{assert_contains_all, call_pairs, import_set, index_project, node_set};
 
 #[test]
 fn java_calls_are_extracted() {
@@ -36,4 +36,30 @@ fn java_calls_are_extracted() {
             "build -> Bar",
         ],
     );
+}
+
+#[test]
+fn java_package_and_wildcard_imports_are_extracted() {
+    let temp = index_project(&[(
+        "src/app/b/App.java",
+        "package app.b;\n\
+         \n\
+         import app.a.*;\n\
+         import static app.a.Util.*;\n\
+         import app.a.Report;\n\
+         \n\
+         class App {}\n",
+    )]);
+
+    assert_contains_all(&node_set(temp.path()), &["module:app.b"]);
+    let imports = import_set(temp.path());
+    assert_contains_all(
+        &imports,
+        &[
+            "* | app.a",
+            "* | app.a.Util",
+            "Report | app.a.Report|export=Report",
+        ],
+    );
+    assert_eq!(imports.len(), 3, "{imports:#?}");
 }

@@ -1272,6 +1272,12 @@ fn import_symbols(node: &TsNode, source: &str, language: Language) -> Vec<Import
         }
 
         // === Java ===
+        // `import a.b.*;` / `import static a.B.*;` bind every member.
+        Language::Java if child_of_kind(node, "asterisk").is_some() => vec![ImportSymbol {
+            local_name: "*".to_string(),
+            module_path,
+            export_name: None,
+        }],
         Language::Java => {
             let last_part = module_path
                 .rsplit('.')
@@ -1827,6 +1833,11 @@ fn module_name(node: &TsNode, source: &str, language: Language) -> Option<String
             .map(|s| s.to_string()),
         // `package a.b.c` → module `a.b.c`
         Language::Kotlin => kotlin_package_name(node, source),
+        Language::Java => node
+            .children(&mut node.walk())
+            .find(|c| matches!(c.kind(), "scoped_identifier" | "identifier"))
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(str::to_string),
         _ => None,
     }
 }
@@ -2464,6 +2475,12 @@ fn node_kind_mappings(language: Language) -> &'static [(&'static str, NodeKind, 
             ("field_declaration", NodeKind::Field, false),
             ("property_declaration", NodeKind::Property, false),
             ("namespace_declaration", NodeKind::Namespace, true),
+            // `namespace A.B;`: the declarations are its siblings.
+            (
+                "file_scoped_namespace_declaration",
+                NodeKind::Namespace,
+                false,
+            ),
             ("using_directive", NodeKind::Import, false),
         ],
 

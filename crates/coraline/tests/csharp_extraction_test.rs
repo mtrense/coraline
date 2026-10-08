@@ -55,3 +55,19 @@ fn csharp_public_declarations_are_exported() {
         ["class:Circle", "method:Area"]
     );
 }
+
+#[test]
+fn csharp_file_scoped_namespace_is_extracted() {
+    let temp = index_project(&[(
+        "src/Model.cs",
+        "namespace App.Model;\n\
+         \n\
+         public class Circle {}\n",
+    )]);
+
+    let namespaces = query_set(
+        temp.path(),
+        "SELECT name FROM nodes WHERE kind = 'namespace'",
+    );
+    assert_contains_all(&namespaces, &["App.Model"]);
+}
