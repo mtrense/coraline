@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **File paths are stored `/`-separated on Windows too** — they were stored with `\`, so lookups by `src/Main.kt` (and node qualified names) didn't match, and a database depended on the OS that built it. Existing Windows databases are fixed on the next sync.
+
 ## [0.13.99] - 2026-10-12
 
 ### Added

@@ -370,10 +370,7 @@ fn framework_fallback(
 }
 
 fn relative_to_root(path: &Path, root: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
+    crate::utils::path_to_slash(path.strip_prefix(root).unwrap_or(path))
 }
 
 /// Candidates of the node kinds a reference of `kind` can target, without

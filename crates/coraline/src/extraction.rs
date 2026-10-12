@@ -1990,9 +1990,9 @@ fn rust_module_target(project_root: &Path, file_path: &str, name: &str) -> Optio
     let candidate_mod = base_dir.join(name).join("mod.rs");
 
     if project_root.join(&candidate_file).is_file() {
-        Some(candidate_file.to_string_lossy().to_string())
+        Some(crate::utils::path_to_slash(&candidate_file))
     } else if project_root.join(&candidate_mod).is_file() {
-        Some(candidate_mod.to_string_lossy().to_string())
+        Some(crate::utils::path_to_slash(&candidate_mod))
     } else {
         None
     }
@@ -2760,7 +2760,7 @@ fn scan_directory(
                 Ok(rel) => rel,
                 Err(_) => continue,
             };
-            let rel_str = rel_path.to_string_lossy().to_string();
+            let rel_str = crate::utils::path_to_slash(rel_path);
 
             if entry.file_type().is_ok_and(|t| t.is_dir()) {
                 let dir_pattern = format!("{}/", rel_str);

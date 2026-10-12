@@ -707,7 +707,7 @@ impl Tool for GetSymbolsOverviewTool {
 
         if nodes.is_empty() {
             // Try with the path as-is (might be stored relative)
-            let nodes_fallback = db::get_nodes_by_file(&conn, file_path, None)
+            let nodes_fallback = db::get_nodes_by_file(&conn, &file_path.replace('\\', "/"), None)
                 .map_err(|e| ToolError::internal_error(format!("Failed to get nodes: {e}")))?;
 
             return Ok(build_overview_response(&nodes_fallback, file_path));

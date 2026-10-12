@@ -241,9 +241,9 @@ impl Tool for GetFileNodesTool {
             let mut n = db::get_nodes_by_file(&conn, &abs_path, kind)
                 .map_err(|e| ToolError::internal_error(format!("Failed to query nodes: {e}")))?;
             if n.is_empty() {
-                n = db::get_nodes_by_file(&conn, raw_path, kind).map_err(|e| {
-                    ToolError::internal_error(format!("Failed to query nodes: {e}"))
-                })?;
+                n = db::get_nodes_by_file(&conn, &raw_path.replace('\\', "/"), kind).map_err(
+                    |e| ToolError::internal_error(format!("Failed to query nodes: {e}")),
+                )?;
             }
             n
         };
@@ -388,7 +388,7 @@ fn find_files_recursive(
             if matched {
                 let rel = entry.path().strip_prefix(root).map_or_else(
                     |_| entry.path().to_string_lossy().to_string(),
-                    |p| p.to_string_lossy().to_string(),
+                    crate::utils::path_to_slash,
                 );
                 results.push(rel);
             }

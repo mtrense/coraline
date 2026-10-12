@@ -54,6 +54,13 @@ pub fn f64_to_f32_lossy(v: f64) -> f32 {
     f32::from_bits(sign | (new_exp << 23) | mantissa)
 }
 
+/// Project-relative path as stored in the database: `/`-separated on every
+/// platform, so a database and the paths queried against it don't depend on
+/// the OS that built it.
+pub fn path_to_slash(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 pub fn node_id_for_symbol(
     file_path: &str,
     kind: &str,
