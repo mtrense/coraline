@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.99] - 2026-10-12
+
 ### Added
 
 - **`extends` / `implements` edges** from supertype clauses: Kotlin delegation specifiers, Java `extends` / `implements` (and interface `extends`), C# base lists, TypeScript / JavaScript class heritage and interface `extends`, Swift inheritance specifiers, Python class bases, Ruby `class C < Base`, PHP `extends` / `implements`, C++ base classes and Rust `impl Trait for Type` (type declared in the same file). Where the syntax doesn't tell (Kotlin, C#, Swift, C++), a class / struct naming an interface, protocol or trait implements it, otherwise it extends. TypeScript `abstract class` declarations are now extracted.
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resolution no longer stalls at 10,000 unresolved refs** — each run read one unordered page of 10k refs; once that many never-resolvable refs (stdlib calls) piled up, later refs were never resolved. The resolver now pages through all refs by id.
 - **Edges into a re-indexed file survive sync / incremental index** — deleting a file's nodes cascaded to edges from other files, whose refs were already gone. Incoming edges are now queued again as unresolved refs before the delete.
 - **Calls outside functions** (property / field initializers, Kotlin `init {}` and getters, class-field arrow functions, top-level script code) were dropped; they are attributed to the enclosing type, else to the file.
+- `get_unembedded_nodes` and the `doctor` embed coverage probe failed on databases migrated to vec0 (`no such table: vectors`); they now read `vectors_meta`.
+- Release workflow passes release notes via an environment variable instead of splicing them into the shell (#90).
 
 ### Changed
 
@@ -36,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Same-file calls with a qualifier other than `this` / `self` or a type declared in the file (`obj.m()`, `util.f()`) are resolved by the resolver (confidence `0.5`) instead of directly at extraction (`1.0`), so an import binding the qualifier takes precedence.
 - DB schema v5: `unresolved_refs.qualifier` stores the call's qualifier (additive migration).
+- CI and release pipelines replaced with fork-specific workflows (fmt, clippy, tests on Linux / macOS / Windows, docs, MSRV, cargo-deny; 7-target release builds with checksums on `vX.Y.Z` tags).
 
 ### Removed
 
