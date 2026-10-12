@@ -1052,7 +1052,11 @@ pub fn get_unembedded_nodes(conn: &Connection, model: &str) -> std::io::Result<V
             |row| row.get(0),
         )
         .map_err(io_other)?;
-    let vectors_table = if has_vec0_meta { "vectors_meta" } else { "vectors" };
+    let vectors_table = if has_vec0_meta {
+        "vectors_meta"
+    } else {
+        "vectors"
+    };
     let mut stmt = conn
         .prepare(&format!(
             "SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
